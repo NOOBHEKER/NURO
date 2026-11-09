@@ -381,36 +381,84 @@ window.addEventListener('keydown', (e) => {
   else if (e.key === 'r' || e.key === 'R') sendCmd('inject_burst');
 });
 
+// Dynamic animation state
+let latestData = null;
+let smoothR = 0.85;
+let smoothPsi = -Math.PI;
+let beamX = 0;
+let radarAngle = 0;
+const shockwaves = [];
+let prevPulses = 0;
+
+// 32 Kuramoto oscillator particles on the unit circle
+const particles = [];
+for (let i = 0; i < 32; i++) {
+  particles.push({
+    th: (i / 32) * Math.PI * 2,
+    targetTh: (i / 32) * Math.PI * 2,
+    rad: 70 + (Math.random() - 0.5) * 6,
+    color: '#3FB950'
+  });
+}
+
 function updateSnnGrid(env, phaseQ15, seq) {
   let activeCount = 0;
   for (let i = 0; i < 64; i++) {
     const pref = ((i / 64.0) * 65536.0) - 32768.0;
     const dist = Math.abs(((phaseQ15 - pref + 32768.0) % 65536.0) - 32768.0);
     const drive = (env / 1300.0) * Math.max(0, 1.0 - dist / 14000.0);
-    if (drive > 0.75 && ((seq + i) % 3 === 0)) {
+    if (drive > 0.72 && ((seq + i) % 3 === 0)) {
       snnCells[i].style.background = '#3FB950';
       snnCells[i].style.color = '#000';
+      snnCells[i].style.boxShadow = '0 0 10px #3FB950, inset 0 0 3px #fff';
+      snnCells[i].style.transform = 'scale(1.10)';
       activeCount++;
-    } else if (drive > 0.35) {
-      snnCells[i].style.background = 'rgba(88,166,255,0.35)';
+    } else if (drive > 0.32) {
+      snnCells[i].style.background = 'rgba(88,166,255,0.30)';
       snnCells[i].style.color = '#E6EDF3';
+      snnCells[i].style.boxShadow = 'none';
+      snnCells[i].style.transform = 'scale(1.0)';
     } else {
-      snnCells[i].style.background = '#121922';
-      snnCells[i].style.color = '#48525E';
+      snnCells[i].style.background = '#101620';
+      snnCells[i].style.color = '#404B57';
+      snnCells[i].style.boxShadow = 'none';
+      snnCells[i].style.transform = 'scale(1.0)';
     }
   }
   document.getElementById('snnActive').textContent = `Spikes: ${activeCount}/64`;
 }
 
-function drawScope(raw, bp) {
+function drawScope(d, now) {
   const w = 460, h = 140;
-  cvTrace.clearRect(0, 0, w, h);
-  cvTrace.strokeStyle = '#141C26'; cvTrace.lineWidth = 1;
+  // Phosphor persistence clear
+  cvTrace.fillStyle = 'rgba(5, 7, 10, 0.32)';
+  cvTrace.fillRect(0, 0, w, h);
+
+  // Reticle grid
+  cvTrace.strokeStyle = '#121922'; cvTrace.lineWidth = 1;
   for (let g = 1; g < 4; g++) {
     cvTrace.beginPath(); cvTrace.moveTo(0, (h/4)*g); cvTrace.lineTo(w, (h/4)*g); cvTrace.stroke();
   }
-  cvTrace.strokeStyle = '#6E7681'; cvTrace.lineWidth = 1.1;
+  cvTrace.beginPath(); cvTrace.moveTo(w/2, 0); cvTrace.lineTo(w/2, h); cvTrace.stroke();
+
+  if (!d || !d.raw || d.raw.length === 0) return;
+
+  // 20 ms Artifact Blanking Curtain
+  if (d.blanked) {
+    cvTrace.fillStyle = 'rgba(210, 153, 34, 0.16)';
+    cvTrace.fillRect(w - 75, 0, 75, h);
+    cvTrace.strokeStyle = '#D29922'; cvTrace.lineWidth = 1.2;
+    cvTrace.setLineDash([3, 3]);
+    cvTrace.strokeRect(w - 75, 0, 75, h);
+    cvTrace.setLineDash([]);
+    cvTrace.fillStyle = '#D29922'; cvTrace.font = 'bold 9.5px monospace';
+    cvTrace.fillText('[CLAMP 20ms]', w - 70, 14);
+  }
+
+  // Raw LFP (Phosphor Gray)
+  cvTrace.strokeStyle = 'rgba(110, 118, 129, 0.85)'; cvTrace.lineWidth = 1.1;
   cvTrace.beginPath();
+  const raw = d.raw;
   for (let i = 0; i < raw.length; i++) {
     const x = (i / (raw.length - 1)) * w;
     const y = h/2 - (raw[i] / 3.8) * (h/2 - 8);
@@ -418,7 +466,11 @@ function drawScope(raw, bp) {
   }
   cvTrace.stroke();
 
-  cvTrace.strokeStyle = '#58A6FF'; cvTrace.lineWidth = 1.9;
+  // Bandpassed I(t) — Pass 1: Neon Aura Glow
+  const bp = d.bp;
+  cvTrace.shadowBlur = 8;
+  cvTrace.shadowColor = '#58A6FF';
+  cvTrace.strokeStyle = 'rgba(88, 166, 255, 0.40)'; cvTrace.lineWidth = 4.0;
   cvTrace.beginPath();
   for (let i = 0; i < bp.length; i++) {
     const x = (i / (bp.length - 1)) * w;
@@ -426,79 +478,162 @@ function drawScope(raw, bp) {
     if (i === 0) cvTrace.moveTo(x, y); else cvTrace.lineTo(x, y);
   }
   cvTrace.stroke();
+
+  // Pass 2: Crisp Core Line
+  cvTrace.shadowBlur = 0;
+  cvTrace.strokeStyle = '#A5D6FF'; cvTrace.lineWidth = 1.7;
+  cvTrace.stroke();
+
+  // Oscilloscope Sweep Beam Head (simulates continuous 2000 Hz raster sweep)
+  beamX = (beamX + 2.8) % w;
+  const beamGrad = cvTrace.createLinearGradient(beamX - 18, 0, beamX, 0);
+  beamGrad.addColorStop(0, 'rgba(88, 166, 255, 0)');
+  beamGrad.addColorStop(1, 'rgba(88, 166, 255, 0.35)');
+  cvTrace.fillStyle = beamGrad;
+  cvTrace.fillRect(beamX - 18, 0, 18, h);
+  cvTrace.strokeStyle = '#79C0FF'; cvTrace.lineWidth = 1.5;
+  cvTrace.beginPath(); cvTrace.moveTo(beamX, 0); cvTrace.lineTo(beamX, h); cvTrace.stroke();
 }
 
-function drawCompass(psiTail, rTail, stimPhases) {
+function drawCompass(d, now) {
   const w = 260, h = 182, cx = w/2, cy = h/2, rad = 72;
   cvPhase.clearRect(0, 0, w, h);
-  cvPhase.fillStyle = 'rgba(63, 185, 80, 0.24)';
-  cvPhase.beginPath(); cvPhase.moveTo(cx, cy);
-  cvPhase.arc(cx, cy, rad, Math.PI - 0.52, Math.PI + 0.52);
-  cvPhase.closePath(); cvPhase.fill();
 
-  cvPhase.strokeStyle = '#242E3B'; cvPhase.lineWidth = 1;
+  // Background Reticle Circles (0.5 and 1.0 unit circle)
+  cvPhase.strokeStyle = '#1E2734'; cvPhase.lineWidth = 1;
   [0.5, 1.0].forEach(f => {
     cvPhase.beginPath(); cvPhase.arc(cx, cy, rad * f, 0, Math.PI * 2); cvPhase.stroke();
   });
   cvPhase.beginPath(); cvPhase.moveTo(cx - rad, cy); cvPhase.lineTo(cx + rad, cy);
   cvPhase.moveTo(cx, cy - rad); cvPhase.lineTo(cx, cy + rad); cvPhase.stroke();
 
-  cvPhase.fillStyle = '#3FB950'; cvPhase.font = 'bold 10px monospace';
-  cvPhase.fillText('φ*=-π', cx - rad - 34, cy + 4);
+  // Optimal PRC Desynchronization Sector: φ* = -π ([-180° ± 31°])
+  const pulseFactor = 0.85 + 0.15 * Math.sin(now * 0.006);
+  cvPhase.fillStyle = `rgba(63, 185, 80, ${0.22 * pulseFactor})`;
+  cvPhase.beginPath(); cvPhase.moveTo(cx, cy);
+  cvPhase.arc(cx, cy, rad * 1.02, Math.PI - 0.54, Math.PI + 0.54);
+  cvPhase.closePath(); cvPhase.fill();
+
+  cvPhase.fillStyle = '#3FB950'; cvPhase.font = 'bold 9.5px monospace';
+  cvPhase.fillText('φ*=-π', cx - rad - 33, cy + 4);
   cvPhase.fillStyle = '#7D8590';
   cvPhase.fillText('0', cx + rad + 5, cy + 4);
 
-  cvPhase.strokeStyle = 'rgba(88, 166, 255, 0.55)'; cvPhase.lineWidth = 1.5;
+  // Rotating Radar Sweep Cone
+  radarAngle = (radarAngle + 0.035) % (Math.PI * 2);
+  const sweepGrad = cvPhase.createRadialGradient(cx, cy, 1, cx, cy, rad);
+  sweepGrad.addColorStop(0, 'rgba(63, 185, 80, 0.15)');
+  sweepGrad.addColorStop(1, 'rgba(63, 185, 80, 0.0)');
+  cvPhase.fillStyle = sweepGrad;
   cvPhase.beginPath();
-  for (let i = 0; i < psiTail.length; i++) {
-    const x = cx + Math.cos(psiTail[i]) * (rTail[i] * rad);
-    const y = cy - Math.sin(psiTail[i]) * (rTail[i] * rad);
-    if (i === 0) cvPhase.moveTo(x, y); else cvPhase.lineTo(x, y);
-  }
-  cvPhase.stroke();
+  cvPhase.moveTo(cx, cy);
+  cvPhase.arc(cx, cy, rad, radarAngle - 0.35, radarAngle);
+  cvPhase.closePath(); cvPhase.fill();
 
-  cvPhase.fillStyle = '#3FB950';
-  stimPhases.forEach(a => {
-    const x = cx + Math.cos(a) * (0.92 * rad);
-    const y = cy - Math.sin(a) * (0.92 * rad);
-    cvPhase.beginPath(); cvPhase.arc(x, y, 4, 0, Math.PI * 2); cvPhase.fill();
-  });
+  // 32 Kuramoto Oscillators Micro-Swarm
+  if (d && d.osc_thetas) {
+    for (let i = 0; i < Math.min(32, d.osc_thetas.length); i++) {
+      particles[i].targetTh = d.osc_thetas[i];
+      // Angular shortest-path interpolation
+      let dTh = particles[i].targetTh - particles[i].th;
+      while (dTh > Math.PI) dTh -= Math.PI * 2;
+      while (dTh < -Math.PI) dTh += Math.PI * 2;
+      particles[i].th += dTh * 0.22;
 
-  if (psiTail.length > 0) {
-    const lp = psiTail[psiTail.length - 1], lr = rTail[rTail.length - 1];
-    cvPhase.fillStyle = '#E6EDF3';
-    cvPhase.beginPath();
-    cvPhase.arc(cx + Math.cos(lp)*(lr*rad), cy - Math.sin(lp)*(lr*rad), 5.5, 0, Math.PI * 2);
-    cvPhase.fill();
+      const px = cx + Math.cos(particles[i].th) * particles[i].rad;
+      const py = cy - Math.sin(particles[i].th) * particles[i].rad;
+      cvPhase.fillStyle = smoothR < 0.35 ? '#3FB950' : (smoothR < 0.65 ? '#D29922' : '#F85149');
+      cvPhase.beginPath(); cvPhase.arc(px, py, 2.4, 0, Math.PI * 2); cvPhase.fill();
+    }
   }
+
+  // Shockwave Animation (spawned on physical stimulation pulse)
+  for (let i = shockwaves.length - 1; i >= 0; i--) {
+    const sw = shockwaves[i];
+    sw.r += 2.2;
+    sw.alpha *= 0.92;
+    cvPhase.strokeStyle = `rgba(63, 185, 80, ${sw.alpha})`;
+    cvPhase.lineWidth = 2.0;
+    cvPhase.beginPath(); cvPhase.arc(sw.x, sw.y, sw.r, 0, Math.PI * 2); cvPhase.stroke();
+    if (sw.alpha < 0.05 || sw.r > sw.maxR) shockwaves.splice(i, 1);
+  }
+
+  // Centroid Phase Vector ψ(t)
+  const vecLen = Math.max(12, smoothR * rad);
+  const hx = cx + Math.cos(smoothPsi) * vecLen;
+  const hy = cy - Math.sin(smoothPsi) * vecLen;
+
+  cvPhase.shadowBlur = 10;
+  cvPhase.shadowColor = smoothR < 0.35 ? '#3FB950' : '#F85149';
+  cvPhase.strokeStyle = smoothR < 0.35 ? '#3FB950' : (latestData && latestData.loop_on ? '#58A6FF' : '#F85149');
+  cvPhase.lineWidth = 2.6;
+  cvPhase.beginPath(); cvPhase.moveTo(cx, cy); cvPhase.lineTo(hx, hy); cvPhase.stroke();
+  cvPhase.shadowBlur = 0;
+
+  // Arrowhead dot
+  cvPhase.fillStyle = '#FFFFFF';
+  cvPhase.beginPath(); cvPhase.arc(hx, hy, 4.5, 0, Math.PI * 2); cvPhase.fill();
 }
 
-function drawHero(rBuf, stimIdx, loopOn) {
+function drawHero(d, now) {
   const w = 780, h = 145;
   cvHero.clearRect(0, 0, w, h);
 
-  // Counterfactual Uncontrolled Seizure Ghost Trace (R ~ 0.90)
-  cvHero.strokeStyle = 'rgba(248, 81, 73, 0.40)';
-  cvHero.setLineDash([6, 4]); cvHero.lineWidth = 1.5;
+  if (!d || !d.r_buf || d.r_buf.length === 0) return;
+  const rBuf = d.r_buf;
+
+  // Counterfactual Uncontrolled Seizure Ghost Trace (R ~ 0.90) with Animated Dash Offset
+  cvHero.strokeStyle = 'rgba(248, 81, 73, 0.35)';
+  cvHero.lineDashOffset = -((now * 0.02) % 20);
+  cvHero.setLineDash([6, 4]); cvHero.lineWidth = 1.4;
   cvHero.beginPath();
   for (let i = 0; i < rBuf.length; i++) {
     const x = (i / (rBuf.length - 1)) * w;
-    const ghostR = 0.89 + 0.025 * Math.sin(i * 0.08);
+    const ghostR = 0.89 + 0.025 * Math.sin((i * 0.08) + (now * 0.002));
     const y = h - ghostR * (h - 18) - 9;
     if (i === 0) cvHero.moveTo(x, y); else cvHero.lineTo(x, y);
   }
   cvHero.stroke();
-
-  // Target Zone line R = 0.25
-  const yT = h - 0.25 * (h - 18) - 9;
-  cvHero.strokeStyle = '#3FB950'; cvHero.setLineDash([3, 3]); cvHero.lineWidth = 1.1;
-  cvHero.beginPath(); cvHero.moveTo(0, yT); cvHero.lineTo(w, yT); cvHero.stroke();
   cvHero.setLineDash([]);
 
-  // Live R(t) curve
-  const curR = rBuf[rBuf.length - 1] || 0;
-  cvHero.strokeStyle = curR < 0.35 ? '#3FB950' : (loopOn ? '#58A6FF' : '#F85149');
-  cvHero.lineWidth = 2.5;
+  // Target Desynchronization Threshold line R = 0.25
+  const yT = h - 0.25 * (h - 18) - 9;
+  cvHero.strokeStyle = '#3FB950'; cvHero.setLineDash([3, 3]); cvHero.lineWidth = 1.0;
+  cvHero.beginPath(); cvHero.moveTo(0, yT); cvHero.lineTo(w, yT); cvHero.stroke();
+  cvHero.setLineDash([]);
+  cvHero.fillStyle = '#3FB950'; cvHero.font = '9.5px monospace';
+  cvHero.fillText('DESYNCHRONIZED TARGET R < 0.25', w - 195, yT - 4);
+
+  // Area Under R(t) Gradient
+  const areaGrad = cvHero.createLinearGradient(0, 0, 0, h);
+  if (smoothR < 0.35) {
+    areaGrad.addColorStop(0, 'rgba(63, 185, 80, 0.22)');
+    areaGrad.addColorStop(1, 'rgba(63, 185, 80, 0.0)');
+  } else if (smoothR < 0.65) {
+    areaGrad.addColorStop(0, 'rgba(210, 153, 34, 0.22)');
+    areaGrad.addColorStop(1, 'rgba(210, 153, 34, 0.0)');
+  } else {
+    areaGrad.addColorStop(0, 'rgba(248, 81, 73, 0.25)');
+    areaGrad.addColorStop(1, 'rgba(248, 81, 73, 0.0)');
+  }
+
+  cvHero.fillStyle = areaGrad;
+  cvHero.beginPath();
+  cvHero.moveTo(0, h);
+  for (let i = 0; i < rBuf.length; i++) {
+    const x = (i / (rBuf.length - 1)) * w;
+    const y = h - rBuf[i] * (h - 18) - 9;
+    cvHero.lineTo(x, y);
+  }
+  cvHero.lineTo(w, h);
+  cvHero.closePath();
+  cvHero.fill();
+
+  // Solid Core Curve R(t) with Glow
+  cvHero.shadowBlur = 8;
+  cvHero.shadowColor = smoothR < 0.35 ? '#3FB950' : (smoothR < 0.65 ? '#D29922' : '#F85149');
+  cvHero.strokeStyle = smoothR < 0.35 ? '#3FB950' : (d.loop_on ? '#58A6FF' : '#F85149');
+  cvHero.lineWidth = 2.4;
   cvHero.beginPath();
   for (let i = 0; i < rBuf.length; i++) {
     const x = (i / (rBuf.length - 1)) * w;
@@ -506,22 +641,69 @@ function drawHero(rBuf, stimIdx, loopOn) {
     if (i === 0) cvHero.moveTo(x, y); else cvHero.lineTo(x, y);
   }
   cvHero.stroke();
+  cvHero.shadowBlur = 0;
 
-  // Stim ticks
-  cvHero.strokeStyle = '#3FB950'; cvHero.lineWidth = 1.8;
-  stimIdx.forEach(ix => {
-    const x = (ix / (rBuf.length - 1)) * w;
-    cvHero.beginPath(); cvHero.moveTo(x, h - 2); cvHero.lineTo(x, h - 18); cvHero.stroke();
-  });
+  // Physical Stimulation Pulses Laser Pins
+  if (d.stim_indices) {
+    d.stim_indices.forEach(ix => {
+      const x = (ix / (rBuf.length - 1)) * w;
+      // Laser tick line
+      cvHero.strokeStyle = '#3FB950'; cvHero.lineWidth = 1.6;
+      cvHero.beginPath(); cvHero.moveTo(x, h - 2); cvHero.lineTo(x, h - 22); cvHero.stroke();
+      // Diamond beacon crown
+      cvHero.fillStyle = '#58A6FF';
+      cvHero.beginPath();
+      cvHero.moveTo(x, h - 26);
+      cvHero.lineTo(x - 2.5, h - 22);
+      cvHero.lineTo(x, h - 18);
+      cvHero.lineTo(x + 2.5, h - 22);
+      cvHero.closePath(); cvHero.fill();
+    });
+  }
+
+  // Floating Digital Value Callout Bubble at latest coordinate
+  const curY = h - smoothR * (h - 18) - 9;
+  cvHero.fillStyle = smoothR < 0.35 ? '#3FB950' : '#F85149';
+  cvHero.beginPath(); cvHero.arc(w - 6, curY, 4, 0, Math.PI * 2); cvHero.fill();
 }
+
+// 60 FPS RequestAnimationFrame Render Loop
+function renderLoop(timestamp) {
+  if (latestData) {
+    const curR = latestData.r_buf[latestData.r_buf.length - 1] || 0.85;
+    smoothR += (curR - smoothR) * 0.16;
+
+    const curPsi = latestData.psi_tail[latestData.psi_tail.length - 1] || -Math.PI;
+    let dPsi = curPsi - smoothPsi;
+    while (dPsi > Math.PI) dPsi -= Math.PI * 2;
+    while (dPsi < -Math.PI) dPsi += Math.PI * 2;
+    smoothPsi += dPsi * 0.18;
+
+    // Detect new stim pulse arrival for shockwave ripple
+    if (latestData.pulses > prevPulses) {
+      prevPulses = latestData.pulses;
+      shockwaves.push({
+        x: 130 + Math.cos(Math.PI) * 72,
+        y: 91 - Math.sin(Math.PI) * 72,
+        r: 4,
+        maxR: 36,
+        alpha: 0.95
+      });
+    }
+
+    drawScope(latestData, timestamp);
+    drawCompass(latestData, timestamp);
+    drawHero(latestData, timestamp);
+  }
+  requestAnimationFrame(renderLoop);
+}
+requestAnimationFrame(renderLoop);
 
 async function poll() {
   try {
     const res = await fetch('/state');
     const d = await res.json();
-    drawScope(d.raw, d.bp);
-    drawCompass(d.psi_tail, d.r_tail, d.stim_phases);
-    drawHero(d.r_buf, d.stim_indices, d.loop_on);
+    latestData = d;
     updateSnnGrid(d.env_q15, d.phase_q15, d.seq);
 
     document.getElementById('spRaw').textContent = d.spark_raw;
@@ -567,7 +749,7 @@ async function poll() {
       e => `<div style="padding:1px 0;color:${e.includes('STIM') ? '#3FB950' : (e.includes('CLI') ? '#D29922' : '#58A6FF')}">${e}</div>`
     ).join('');
   } catch (err) {}
-  setTimeout(poll, 55);
+  setTimeout(poll, 45);
 }
 poll();
 </script>
@@ -616,6 +798,7 @@ class TuiCockpitEngine:
         self.refrac = 0
         self.pending_stim = 0.0
         self.blanked_now = False
+        self.stim_fired_batch = False
         self.env_q15 = 250
         self.phase_q15 = -31000
         self.last_tx_hex = ""
@@ -685,6 +868,7 @@ class TuiCockpitEngine:
 
     def step_batch(self, n_frames: int = 16) -> None:
         with self.lock:
+            self.stim_fired_batch = False
             for _ in range(n_frames):
                 if not self.hw_live and (self.seq % 200 == 0):
                     self._connect_serial()
@@ -761,6 +945,7 @@ class TuiCockpitEngine:
                     self.dsp.notify_stim()
                     self.pulses += 1
                     self.refrac = 8
+                    self.stim_fired_batch = True
                     self.stim_indices.append(self.win_len - 1)
                     self.stim_phases.append(psi_val)
                     self.events.append(
@@ -802,6 +987,8 @@ class TuiCockpitEngine:
                 "model_name": self.model_names[self.model_idx],
                 "seq": self.seq,
                 "blanked": self.blanked_now,
+                "stim_fired": self.stim_fired_batch,
+                "osc_thetas": [round(float(th), 3) for th in self.k_brain.theta[::2]],
                 "env_q15": self.env_q15,
                 "phase_q15": self.phase_q15,
                 "raw": raw_l,
