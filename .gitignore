@@ -1,0 +1,11 @@
+venv/
+.venv/
+__pycache__/
+*.pyc
+data/raw/
+runs/
+*.bin
+*.elf
+build/
+sdkconfig.old
+.pytest_cache/
