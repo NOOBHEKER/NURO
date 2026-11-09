@@ -82,7 +82,8 @@ class KuramotoBrain:
                 lfp += self.cfg.artifact_amp * float(np.exp(-dt_stim / self.cfg.artifact_tau_s))
 
         raw_i16 = int(np.clip(np.round(lfp * self.cfg.scale_int16), -32768, 32767))
-        return raw_i16, R, psi
+        r_post, psi_post = self.order_parameter()
+        return raw_i16, r_post, psi_post
 
     def trajectory_hash(self) -> str:
         """Return SHA-256 hash of current oscillator phases for Gate G4 determinism check."""

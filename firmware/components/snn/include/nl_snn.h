@@ -4,6 +4,10 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define NL_SNN_IN      16
 #define NL_SNN_HID     64
 #define NL_SNN_STEPS   8
@@ -27,5 +31,9 @@ uint8_t nl_snn_step(
     const int8_t w2[NL_SNN_HID],
     bool inhibit
 );
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* NL_SNN_H */

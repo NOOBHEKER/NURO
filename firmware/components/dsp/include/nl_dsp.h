@@ -4,6 +4,10 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define NL_FIR_TAPS       61
 #define NL_BLANK_SAMPLES  40  /* 20 ms @ 2 kHz stimulation artifact blanking window */
 
@@ -26,5 +30,9 @@ typedef struct {
 void nl_dsp_init(nl_dsp_state_t *st);
 void nl_dsp_notify_stim(nl_dsp_state_t *st);
 nl_dsp_out_t nl_dsp_step(nl_dsp_state_t *st, int16_t raw_sample);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* NL_DSP_H */

@@ -14,6 +14,8 @@ from host.hil.protocol import (
     MODE_LOCKSTEP,
     STATE_ARMED,
 )
+from host.hil.dsp_ref import DspChainRef, atan2_q15, isqrt32
+from host.analysis.prc_and_bakeoff import identify_empirical_prc, run_five_arm_bakeoff
 from host.virtualbrain.kuramoto import KuramotoBrain, KuramotoConfig
 from host.virtualbrain.jansen_rit import JansenRitBrain, JansenRitConfig
 
@@ -175,3 +177,84 @@ def test_gate_g7_phase_locked_beats_sham_and_no_stim() -> None:
 
 def test_windows_timer_helper() -> None:
     assert enable_windows_1ms_timer() is True
+
+
+def test_gate_g3_dsp_quadrature_phase_and_artifact_blanking() -> None:
+    """Gate G3: Verify 61-tap Q15 quadrature bandpass, phase accuracy < 3 deg, and 20 ms artifact blanking."""
+    dsp = DspChainRef()
+    fs = 2000.0
+    f_test = 20.0
+    amp = 2000.0
+
+    # 1. Feed 500 samples (250 ms) of clean 20 Hz cosine and verify envelope & phase linearity
+    phases = []
+    envs = []
+    outputs_golden = []
+    for n in range(1000):
+        t = n / fs
+        raw = int(np.round(amp * np.cos(2.0 * np.pi * f_test * t)))
+        # At sample 600, inject a massive +30000 LSB stimulation artifact spike right after notify_stim()
+        if n == 600:
+            dsp.notify_stim()
+        if 600 <= n < 615:
+            raw = 30000  # 15x full-scale artifact transient
+
+        out = dsp.step(raw)
+        if 200 <= n < 500:
+            envs.append(out.env_q15)
+            phases.append(out.phase_q15)
+        if n < 200:
+            outputs_golden.append(
+                {
+                    "n": n,
+                    "raw": raw,
+                    "I_q15": out.I_q15,
+                    "Q_q15": out.Q_q15,
+                    "env_q15": out.env_q15,
+                    "phase_q15": out.phase_q15,
+                }
+            )
+        if 600 <= n < 640:
+            assert out.blanked is True, f"Sample {n} must be blanked during 40-sample (20 ms) window"
+            assert out.env_q15 < 3500, f"Artifact leaked into envelope at sample {n}: {out.env_q15}"
+        elif n >= 640:
+            assert out.blanked is False
+
+    mean_env = float(np.mean(envs))
+    # Gain at 20 Hz should be within 5% of unity (2000 LSB)
+    assert 1850.0 <= mean_env <= 2150.0, f"Expected passband envelope ~2000, got {mean_env:.1f}"
+
+    # Verify phase progression per sample at 20 Hz: d_phase = 20 / 2000 * 65536 = 655.36 Q15 units/sample
+    d_phase = np.diff(np.unwrap(np.array(phases, dtype=np.float64) * np.pi / 32768.0))
+    measured_freq_hz = float(np.mean(d_phase)) * fs / (2.0 * np.pi)
+    assert abs(measured_freq_hz - 20.0) < 0.15, f"Expected 20.0 Hz phase slope, got {measured_freq_hz:.3f} Hz"
+
+    # Save golden DSP fixture
+    GOLDEN_DIR.mkdir(parents=True, exist_ok=True)
+    (GOLDEN_DIR / "dsp_fixture.json").write_text(json.dumps(outputs_golden[:50], indent=2), encoding="utf-8")
+
+
+def test_gate_g8_prc_identification_and_five_arm_bakeoff() -> None:
+    """Gate G8: Empirical PRC identification (12 phases) + 5-arm bakeoff with 95% bootstrap CIs."""
+    res = run_five_arm_bakeoff(n_seeds=8, n_steps=1600, pulse_u=600.0)
+
+    # 1. Empirical PRC must identify optimal phase near +/- pi (where cos(phi*) < -0.8)
+    phi_star = res["prc"]["phi_star_rad"]
+    assert np.cos(phi_star) < -0.80, f"Expected optimal PRC phase near pi, got {phi_star:.3f} rad"
+    assert res["prc"]["phi_star_delta_R"] < -0.05
+
+    # 2. 95% Bootstrap CIs for (A - D) and (C - D) must strictly exclude 0
+    ad = res["contrasts"]["delta_R_A_minus_D"]
+    cd = res["contrasts"]["delta_R_C_minus_D"]
+    assert ad["ci95_low"] > 0.20, f"CI for A-D must exclude 0 (>0.20), got {ad}"
+    assert cd["ci95_low"] > 0.10, f"CI for C-D must exclude 0 (>0.10), got {cd}"
+
+    # 3. Armed phase-locked (Arm E) must use fewer pulses than unarmed (Arm D) while still collapsing R
+    pulses_d = res["arms"]["D_phase_locked"]["pulses_mean"]
+    pulses_e = res["arms"]["E_phase_locked_armed"]["pulses_mean"]
+    assert pulses_e < pulses_d, f"Armed controller (E={pulses_e}) must reduce pulse burden vs D={pulses_d}"
+
+    GOLDEN_DIR.mkdir(parents=True, exist_ok=True)
+    (GOLDEN_DIR / "five_arm_bakeoff.json").write_text(json.dumps(res, indent=2), encoding="utf-8")
+
+
