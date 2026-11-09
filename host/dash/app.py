@@ -253,6 +253,19 @@ def run_live_interactive_cockpit(port: str = "COM6", baudrate: int = 2000000) ->
     fig = plt.figure(figsize=(15.0, 8.8), facecolor="#0D1117")
     try:
         fig.canvas.manager.set_window_title("NEURAL LOOP — Live ESP32-S3 HIL Closed-Loop Cockpit (COM6)")
+        win = fig.canvas.manager.window
+        win.update_idletasks()
+        win.deiconify()
+        win.state("zoomed")
+        win.lift()
+        win.attributes("-topmost", True)
+        win.focus_force()
+        import ctypes
+        hwnd = ctypes.windll.user32.GetParent(win.winfo_id()) or win.winfo_id()
+        ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE (overrides SW_HIDE from parent STARTUPINFO)
+        ctypes.windll.user32.ShowWindow(hwnd, 3)  # SW_MAXIMIZE
+        ctypes.windll.user32.SetForegroundWindow(hwnd)
+        win.after(2500, lambda: win.attributes("-topmost", False))
     except Exception:
         pass
 
