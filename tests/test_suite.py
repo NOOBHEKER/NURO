@@ -317,4 +317,61 @@ def test_tui_and_web_cockpit_engines() -> None:
     assert "hex_inspector" in snap and len(snap["raw"]) == 360
 
 
+def test_scientific_calculator_and_graph() -> None:
+    """Verify natural-language scientific calculator, derivatives, integrals, and Braille plot."""
+    from host.calc import calculate_and_graph
+    res1 = calculate_and_graph("sqrt of 16 times pi")
+    assert "12.56637" in res1
+
+    res2 = calculate_and_graph("x^3 - 3*x")
+    assert "f'(x)" in res2
+    assert "∫ f(x) dx" in res2
+    assert "GRAPH:" in res2
+
+    res3 = calculate_and_graph("x^2 - 4*x - 5 = 0")
+    assert "SOLUTIONS FOR x" in res3
+
+
+def test_chemistry_balancer_and_numericals() -> None:
+    """Verify chemical equation balancing, molar mass, and pH/kinetics solvers."""
+    from host.chem import balance_chemical_equation, compute_molar_mass, solve_chem_numerical
+    balanced = balance_chemical_equation("KMnO4 + HCl -> KCl + MnCl2 + H2O + Cl2")
+    assert "2KMnO4 + 16HCl ➔ 2KCl + 2MnCl2 + 8H2O + 5Cl2" in balanced
+
+    mass, pcts = compute_molar_mass("CuSO4*5H2O")
+    assert abs(mass - 249.677) < 0.1
+    assert "Cu" in pcts and "O" in pcts
+
+    ph_res = solve_chem_numerical("ph 0.01 M HCl")
+    assert "pH = -log10[H+]" in ph_res
+    assert "Titration" in ph_res
+
+    kin_res = solve_chem_numerical("kinetics k=0.08")
+    assert "Half-Life" in kin_res
+
+
+def test_physics_simulation_and_constants() -> None:
+    """Verify projectile motion, RLC ringing, relativity, Bohr quantum model, and constants."""
+    from host.phy import solve_physics, CONSTANTS
+    assert "c" in CONSTANTS and abs(CONSTANTS["c"][0] - 299792458.0) < 1.0
+
+    proj = solve_physics("projectile v=50 angle=45")
+    assert "Time of Flight" in proj
+    assert "Maximum Altitude H" in proj
+    assert "Trajectory y(x)" in proj
+
+    rlc = solve_physics("rlc R=5 L=0.05 C=0.0001")
+    assert "Underdamped Ringing" in rlc
+    assert "Capacitor Voltage" in rlc
+
+    rel = solve_physics("relativity v=0.9c")
+    assert "Lorentz Factor γ" in rel
+    assert "2.294" in rel
+
+    bohr = solve_physics("bohr n1=2 n2=3")
+    assert "Balmer" in bohr
+    assert "656" in bohr
+
+
+
 

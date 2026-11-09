@@ -58,17 +58,36 @@ def main() -> None:
     p_calc = sub.add_parser("calc", help="Whole Scientific Graphing Calculator & Calculus Engine")
     p_calc.add_argument("query", nargs="*", help="Optional math expression, equation, or calculus question")
 
+    # nuro chem (Advanced Chemistry Balancer & Numericals)
+    p_chem = sub.add_parser("chem", help="Chemistry Reaction Balancer, Molar Mass, pH & Kinetics")
+    p_chem.add_argument("query", nargs="*", help="Optional chemical equation, molar mass, pH, or kinetics query")
+
+    # nuro phy (Over-the-Top Physics Simulation & Formulas)
+    p_phy = sub.add_parser("phy", help="Over-the-Top Physics Engine (Mechanics, RLC, Relativity, Quantum)")
+    p_phy.add_argument("query", nargs="*", help="Optional physics query (e.g. 'projectile v=50 angle=45')")
+
     # nuro solve / math
     p_solve = sub.add_parser("solve", help="Natural-language formula solver with Unicode graph")
     p_solve.add_argument("query", nargs="+", help="Formula or question (e.g. 'sqrt of 16 times pi', 'sin(x)*exp(-x/5)')")
 
     args, unknown = parser.parse_known_args()
 
-    # If first arg is not a known subcommand -> route to calculator!
+    # If first arg is not a known subcommand -> smart route based on query contents!
     if not args.command and unknown:
-        from host.calc import calculate_and_graph
-        print(calculate_and_graph(" ".join(unknown)))
-        return
+        q_raw = " ".join(unknown)
+        q_low = q_raw.lower()
+        if "->" in q_raw or "➔" in q_raw or any(w in q_low for w in ["molar mass", "titration", "kinetics", "kmno4"]):
+            from host.chem import solve_chem_numerical
+            print(solve_chem_numerical(q_raw))
+            return
+        elif any(w in q_low for w in ["projectile", "rlc", "relativity", "bohr", "blackbody", "photoelectric", "lorentz", "damping"]):
+            from host.phy import solve_physics
+            print(solve_physics(q_raw))
+            return
+        else:
+            from host.calc import calculate_and_graph
+            print(calculate_and_graph(q_raw))
+            return
 
     cmd = args.command or "tui"
 
@@ -137,6 +156,22 @@ def main() -> None:
             print(calculate_and_graph(" ".join(q_list)))
         else:
             run_calc_repl()
+
+    elif cmd == "chem":
+        from host.chem import solve_chem_numerical, run_chem_repl
+        q_list = getattr(args, "query", [])
+        if q_list:
+            print(solve_chem_numerical(" ".join(q_list)))
+        else:
+            run_chem_repl()
+
+    elif cmd == "phy":
+        from host.phy import solve_physics, run_phy_repl
+        q_list = getattr(args, "query", [])
+        if q_list:
+            print(solve_physics(" ".join(q_list)))
+        else:
+            run_phy_repl()
 
     elif cmd == "solve":
         from host.calc import calculate_and_graph

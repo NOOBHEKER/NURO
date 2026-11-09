@@ -246,8 +246,8 @@ def calculate_and_graph(query: str, domain: Optional[Tuple[float, float]] = None
         integ_expr = sp.integrate(sym_expr, x)
 
         out.append(f"{C_BOLD}{C_GREEN}⚡ FUNCTION CALCULATOR:{C_RESET} {C_WHITE}f(x) = {sym_expr}{C_RESET}")
-        out.append(f"  {C_GRAY}Derivative f'(x) :{C_RESET} {C_CYAN}{d_expr}{C_RESET}")
-        out.append(f"  {C_GRAY}Integral   ∫f dx :{C_RESET} {C_PURPLE}{integ_expr} + C{C_RESET}")
+        out.append(f"  {C_GRAY}Derivative f'(x)     :{C_RESET} {C_CYAN}{d_expr}{C_RESET}")
+        out.append(f"  {C_GRAY}Integral   ∫ f(x) dx :{C_RESET} {C_PURPLE}{integ_expr} + C{C_RESET}")
 
         # Find roots f(x) = 0
         try:
