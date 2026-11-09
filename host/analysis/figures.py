@@ -16,12 +16,13 @@ from pathlib import Path
 from typing import Dict, Any, List
 import numpy as np
 import matplotlib
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import FancyBboxPatch
 
 from host.virtualbrain.kuramoto import KuramotoBrain, KuramotoConfig
 from host.hil.dsp_ref import DspChainRef
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 PALETTE = {
     "A_none": "#111111",
@@ -341,7 +342,7 @@ def generate_fig6_7_8_combined(bakeoff_data: Dict[str, Any], out_dir: Path) -> L
     paths.extend(save_fig(fig8, out_dir, "fig8_burden"))
 
     # Fig 9: Patient-Wise Pre-Ictal Prediction ROC & Lead-Time Distribution (Gates G5 & G6)
-    pred_path = Path("tests/golden/detector_predictor_eval.json")
+    pred_path = REPO_ROOT / "tests/golden/detector_predictor_eval.json"
     if pred_path.exists():
         pred_data = json.loads(pred_path.read_text(encoding="utf-8"))
         g6 = pred_data["gate_g6_predictor"]
@@ -383,8 +384,8 @@ def generate_fig6_7_8_combined(bakeoff_data: Dict[str, Any], out_dir: Path) -> L
 
 
 def generate_all_figures(
-    root_dir: Path = Path("."),
-    out_dir: Path = Path("docs/figures"),
+    root_dir: Path = REPO_ROOT,
+    out_dir: Path = REPO_ROOT / "docs/figures",
 ) -> List[Path]:
     bakeoff_path = root_dir / "tests/golden/five_arm_bakeoff.json"
     bakeoff_data = json.loads(bakeoff_path.read_text(encoding="utf-8"))

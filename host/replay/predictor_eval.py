@@ -313,11 +313,14 @@ def evaluate_gate_g6_predictor(seed: int = 2026) -> Dict[str, Any]:
     }
 
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
 if __name__ == "__main__":
     g5 = evaluate_gate_g5_detector()
     g6 = evaluate_gate_g6_predictor()
     out = {"gate_g5_detector": g5, "gate_g6_predictor": g6}
-    out_path = Path("tests/golden/detector_predictor_eval.json")
+    out_path = REPO_ROOT / "tests/golden/detector_predictor_eval.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(out, indent=2), encoding="utf-8")
     print(json.dumps({"g5": g5, "g6_summary": g6["summary"]}, indent=2))

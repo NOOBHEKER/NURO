@@ -21,9 +21,12 @@ from host.virtualbrain.kuramoto import KuramotoBrain, KuramotoConfig
 from host.hil.dsp_ref import DspChainRef
 
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
 def render_dashboard_snapshot(
-    root_dir: Path = Path("."),
-    out_path: Path = Path("docs/figures/dashboard_hero.png"),
+    root_dir: Path = REPO_ROOT,
+    out_path: Path = REPO_ROOT / "docs/figures/dashboard_hero.png",
     show_gui: bool = False,
 ) -> Path:
     if not show_gui:

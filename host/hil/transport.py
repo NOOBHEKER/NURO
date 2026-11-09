@@ -19,12 +19,15 @@ from host.hil.protocol import (
 from host.virtualbrain.kuramoto import KuramotoBrain, KuramotoConfig
 
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
 def run_hil_benchmark(
     port: str = "COM6",
     baudrate: int = 2000000,
     n_frames: int = 1000,
     seed: int = 2026,
-    runs_root: Path = Path("runs"),
+    runs_root: Path = REPO_ROOT / "runs",
 ) -> Dict[str, Any]:
     """Run a hardware-in-the-loop closed-loop session against the ESP32-S3 on COM6.
 
