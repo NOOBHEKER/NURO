@@ -54,9 +54,18 @@ def main() -> None:
     # nuro info
     sub.add_parser("info", help="Probe and display live ESP32-S3 board facts on COM6")
 
-    args = parser.parse_args()
+    # nuro solve / math
+    p_solve = sub.add_parser("solve", help="Natural-language formula solver with Unicode graph")
+    p_solve.add_argument("query", nargs="+", help="Formula or question (e.g. 'sqrt of 16 times pi', 'sin(x)*exp(-x/5)')")
 
-    # Default to 'tui' if no command given
+    args, unknown = parser.parse_known_args()
+
+    # If first arg is not a known subcommand and looks like a math question -> route to solver!
+    if not args.command and unknown:
+        from host.math_solver import solve_question
+        print(solve_question(" ".join(unknown)))
+        return
+
     cmd = args.command or "tui"
 
     if cmd == "tui":
@@ -116,6 +125,11 @@ def main() -> None:
         print(f"Successfully generated {len(files)} figure files (PNG + PDF):")
         for f in files:
             print(f"  - {f}")
+
+    elif cmd == "solve":
+        from host.math_solver import solve_question
+        query_str = " ".join(getattr(args, "query", []))
+        print(solve_question(query_str))
 
     elif cmd == "info":
         import serial
