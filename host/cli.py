@@ -54,16 +54,20 @@ def main() -> None:
     # nuro info
     sub.add_parser("info", help="Probe and display live ESP32-S3 board facts on COM6")
 
+    # nuro calc (Interactive Scientific Graphing Calculator Shell or One-liner)
+    p_calc = sub.add_parser("calc", help="Whole Scientific Graphing Calculator & Calculus Engine")
+    p_calc.add_argument("query", nargs="*", help="Optional math expression, equation, or calculus question")
+
     # nuro solve / math
     p_solve = sub.add_parser("solve", help="Natural-language formula solver with Unicode graph")
     p_solve.add_argument("query", nargs="+", help="Formula or question (e.g. 'sqrt of 16 times pi', 'sin(x)*exp(-x/5)')")
 
     args, unknown = parser.parse_known_args()
 
-    # If first arg is not a known subcommand and looks like a math question -> route to solver!
+    # If first arg is not a known subcommand -> route to calculator!
     if not args.command and unknown:
-        from host.math_solver import solve_question
-        print(solve_question(" ".join(unknown)))
+        from host.calc import calculate_and_graph
+        print(calculate_and_graph(" ".join(unknown)))
         return
 
     cmd = args.command or "tui"
@@ -126,10 +130,18 @@ def main() -> None:
         for f in files:
             print(f"  - {f}")
 
+    elif cmd == "calc":
+        from host.calc import calculate_and_graph, run_calc_repl
+        q_list = getattr(args, "query", [])
+        if q_list:
+            print(calculate_and_graph(" ".join(q_list)))
+        else:
+            run_calc_repl()
+
     elif cmd == "solve":
-        from host.math_solver import solve_question
+        from host.calc import calculate_and_graph
         query_str = " ".join(getattr(args, "query", []))
-        print(solve_question(query_str))
+        print(calculate_and_graph(query_str))
 
     elif cmd == "info":
         import serial
