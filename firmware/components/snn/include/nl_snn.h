@@ -23,11 +23,11 @@ typedef struct {
 
 void nl_snn_reset(nl_snn_state_t *st);
 
-/* Executes 1 timestep across 64 hidden LIF neurons + 1 readout neuron */
-uint8_t nl_snn_step(
+/* Executes NL_SNN_STEPS (8) LIF membrane steps for a 1 ms block over 64 hidden + 1 readout neuron */
+uint8_t nl_snn_step_block(
     nl_snn_state_t *st,
     const int8_t in_features[NL_SNN_IN],
-    const int8_t w1[NL_SNN_IN][NL_SNN_HID],
+    const int8_t w1[NL_SNN_HID][NL_SNN_IN],
     const int8_t w2[NL_SNN_HID],
     bool inhibit
 );

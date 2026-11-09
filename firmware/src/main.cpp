@@ -24,19 +24,16 @@ static uint16_t       g_budget_used = 0;
 static uint32_t       g_last_stim_us = 0;
 static int8_t         g_in_feat[NL_SNN_IN];
 
-/* Deterministic int8 SNN weights initialized on boot for fast-loop burst detection */
-static int8_t g_w1[NL_SNN_IN][NL_SNN_HID];
+/* Deterministic int8 SNN weights (row-major [HID][IN] for L1 cache & SIMD locality) */
+static int8_t g_w1[NL_SNN_HID][NL_SNN_IN];
 static int8_t g_w2[NL_SNN_HID];
 
 static void init_snn_weights(void) {
-    for (int i = 0; i < NL_SNN_IN; ++i) {
-        for (int j = 0; j < NL_SNN_HID; ++j) {
-            /* Deterministic structured excitatory/inhibitory receptive fields */
-            int val = ((i * 7 + j * 13) % 31) - 10;
-            g_w1[i][j] = (int8_t)val;
-        }
-    }
     for (int j = 0; j < NL_SNN_HID; ++j) {
+        for (int i = 0; i < NL_SNN_IN; ++i) {
+            int val = ((i * 7 + j * 13) % 31) - 10;
+            g_w1[j][i] = (int8_t)val;
+        }
         g_w2[j] = (j % 4 == 0) ? -12 : 18;
     }
 }
@@ -59,10 +56,10 @@ void setup() {
     nl_snn_reset(&g_snn);
     init_snn_weights();
 
-    /* 4. High-speed UART over WCH CH343 @ 921600 baud (zero framing wait) */
+    /* 4. High-speed UART over WCH CH343 @ 2000000 baud (2 Mbps) */
     Serial.setRxBufferSize(1024);
     Serial.setTxBufferSize(1024);
-    Serial.begin(921600);
+    Serial.begin(2000000);
 }
 
 void loop() {
@@ -103,20 +100,19 @@ void loop() {
             g_in_feat[k + 8] = (int8_t)(dsp_out1.I_q15 >> 8);
         }
 
-        /* Execute 64-neuron int8 LIF SNN (inhibited automatically if artifact blanking active) */
-        uint8_t spike_count = 0;
-        for (int s = 0; s < NL_SNN_STEPS; ++s) {
-            spike_count += nl_snn_step(&g_snn, g_in_feat, g_w1, g_w2, dsp_out1.blanked);
-        }
+        /* Execute 64-neuron int8 LIF SNN over 8 sub-steps (inhibited automatically if artifact blanking active) */
+        uint8_t spike_count = nl_snn_step_block(&g_snn, g_in_feat, g_w1, g_w2, dsp_out1.blanked);
         uint32_t t_dec = (uint32_t)esp_timer_get_time();
 
         /* Phase-locked controller decision:
-         * Target phase is trough (+/- pi -> |phase_q15| > 26000) when burst detected or armed
+         * Fact #8: Compensate 61-tap FIR group delay (30 samples = 15 ms = +0.6*pi rad = +19661 Q15 at 20 Hz).
+         * Target phase is trough (+/- pi -> |comp_phase_q15| >= 25000) when burst detected.
          */
-        bool is_burst = (!dsp_out1.blanked) && (spike_count >= 5 || norm_env >= 48);
-        int32_t abs_phase = (dsp_out1.phase_q15 < 0) ? -(int32_t)dsp_out1.phase_q15 : (int32_t)dsp_out1.phase_q15;
+        int16_t comp_phase_q15 = (int16_t)(dsp_out1.phase_q15 + 19661);
+        bool is_burst = (!dsp_out1.blanked) && (spike_count >= 4 || dsp_out1.env_q15 >= 320);
+        int32_t abs_phase = (comp_phase_q15 < 0) ? -(int32_t)comp_phase_q15 : (int32_t)comp_phase_q15;
         bool in_target_phase = (abs_phase >= 25000); /* within ~42 deg of +/- pi */
-        bool refractory_ok = ((t_dec - g_last_stim_us) >= 20000U); /* 20 ms hard refractory (max 50 Hz) */
+        bool refractory_ok = ((t_dec - g_last_stim_us) >= 15000U); /* 15 ms refractory */
 
         uint32_t t_stim = 0;
         if ((in_frame->flags & 0x02U) || is_burst) {
@@ -151,7 +147,7 @@ void loop() {
         out_frame.t_stim_us   = t_stim;
         out_frame.cls         = is_burst ? 1U : 0U;
         out_frame.conf        = (uint8_t)((spike_count * 255U) / NL_SNN_STEPS);
-        out_frame.phase_q15   = dsp_out1.phase_q15;
+        out_frame.phase_q15   = comp_phase_q15;
         out_frame.R_q15       = dsp_out1.env_q15;
         out_frame.budget_used = g_budget_used;
 

@@ -21,7 +21,7 @@ from host.virtualbrain.kuramoto import KuramotoBrain, KuramotoConfig
 
 def run_hil_benchmark(
     port: str = "COM6",
-    baudrate: int = 921600,
+    baudrate: int = 2000000,
     n_frames: int = 1000,
     seed: int = 2026,
     runs_root: Path = Path("runs"),
