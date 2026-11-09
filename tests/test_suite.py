@@ -18,6 +18,8 @@ from host.hil.dsp_ref import DspChainRef, atan2_q15, isqrt32
 from host.analysis.prc_and_bakeoff import identify_empirical_prc, run_five_arm_bakeoff
 from host.analysis.figures import generate_all_figures
 from host.dash.app import render_dashboard_snapshot
+from host.dash.tui import visible_len, pad_ansi, render_braille_plot
+from host.dash.web_cockpit import TuiCockpitEngine
 from host.replay.predictor_eval import evaluate_gate_g5_detector, evaluate_gate_g6_predictor
 from host.virtualbrain.kuramoto import KuramotoBrain, KuramotoConfig
 from host.virtualbrain.jansen_rit import JansenRitBrain, JansenRitConfig
@@ -288,6 +290,31 @@ def test_gate_g10_reproducible_figures_and_dashboard() -> None:
 
     dash_file = render_dashboard_snapshot(show_gui=False)
     assert dash_file.exists() and dash_file.stat().st_size > 10_000
+
+
+def test_tui_and_web_cockpit_engines() -> None:
+    """Verify ANSI-aware TUI alignment, Unicode Braille oscilloscope, and TuiCockpitEngine CLI shell."""
+    colored = "\033[38;5;78mLIVE ESP32-S3\033[0m"
+    assert visible_len(colored) == 13
+    padded = pad_ansi(colored, 20)
+    assert visible_len(padded) == 20
+
+    braille = render_braille_plot([0.85, 0.70, 0.50, 0.30, 0.20], 0.0, 1.0, cols=20, rows=3, threshold_y=0.25)
+    assert len(braille) == 3
+    for b_row in braille:
+        assert visible_len(b_row) == 20
+
+    eng = TuiCockpitEngine(port="COM_NONEXISTENT")
+    eng.step_batch(10)
+    eng.execute_command("cli:loop off")
+    assert eng.loop_on is False
+    eng.execute_command("cli:arm sham")
+    assert eng.arm_idx == 1
+    eng.execute_command("cli:model jansen")
+    assert eng.model_idx == 1
+    eng.execute_command("cli:burst")
+    snap = eng.snapshot()
+    assert "hex_inspector" in snap and len(snap["raw"]) == 360
 
 
 
