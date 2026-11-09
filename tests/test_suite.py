@@ -16,6 +16,8 @@ from host.hil.protocol import (
 )
 from host.hil.dsp_ref import DspChainRef, atan2_q15, isqrt32
 from host.analysis.prc_and_bakeoff import identify_empirical_prc, run_five_arm_bakeoff
+from host.analysis.figures import generate_all_figures
+from host.dash.app import render_dashboard_snapshot
 from host.virtualbrain.kuramoto import KuramotoBrain, KuramotoConfig
 from host.virtualbrain.jansen_rit import JansenRitBrain, JansenRitConfig
 
@@ -256,5 +258,17 @@ def test_gate_g8_prc_identification_and_five_arm_bakeoff() -> None:
 
     GOLDEN_DIR.mkdir(parents=True, exist_ok=True)
     (GOLDEN_DIR / "five_arm_bakeoff.json").write_text(json.dumps(res, indent=2), encoding="utf-8")
+
+
+def test_gate_g10_reproducible_figures_and_dashboard() -> None:
+    """Gate G10: One command regenerates all 8 publication figures (PNG + PDF) and the 4-panel dashboard."""
+    fig_files = generate_all_figures()
+    assert len(fig_files) == 16
+    for f in fig_files:
+        assert f.exists() and f.stat().st_size > 2048, f"Missing or empty figure: {f}"
+
+    dash_file = render_dashboard_snapshot(show_gui=False)
+    assert dash_file.exists() and dash_file.stat().st_size > 10_000
+
 
 
