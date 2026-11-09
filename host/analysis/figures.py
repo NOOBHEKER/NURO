@@ -340,6 +340,45 @@ def generate_fig6_7_8_combined(bakeoff_data: Dict[str, Any], out_dir: Path) -> L
     ax8.set_title("Figure 8. Stimulation Burden vs. Desynchronization Efficacy Across All Five Arms", fontsize=10, fontweight="bold")
     paths.extend(save_fig(fig8, out_dir, "fig8_burden"))
 
+    # Fig 9: Patient-Wise Pre-Ictal Prediction ROC & Lead-Time Distribution (Gates G5 & G6)
+    pred_path = Path("tests/golden/detector_predictor_eval.json")
+    if pred_path.exists():
+        pred_data = json.loads(pred_path.read_text(encoding="utf-8"))
+        g6 = pred_data["gate_g6_predictor"]
+        fig9, (ax9a, ax9b) = plt.subplots(1, 2, figsize=(10.4, 3.9))
+        fig9.subplots_adjust(wspace=0.38)
+        apply_style(ax9a)
+        apply_style(ax9b)
+
+        pat_colors = ["#0072B2", "#009E73", "#D55E00", "#CC79A7"]
+        for idx, (pid, pinfo) in enumerate(g6["per_patient"].items()):
+            ax9a.plot(
+                pinfo["roc_fpr"],
+                pinfo["roc_tpr"],
+                color=pat_colors[idx % len(pat_colors)],
+                linewidth=1.8,
+                label=f"{pid} (AUROC = {pinfo['auroc_int8_cnn']:.3f})",
+            )
+        ax9a.plot([0, 1], [0, 1], color="#666666", linestyle="--", linewidth=1.1, label="Persistence / Chance (~0.49)")
+        ax9a.set_xlabel("False Positive Rate (Interictal)", fontsize=9.2)
+        ax9a.set_ylabel("True Positive Rate (Pre-Ictal [-60s, -5s])", fontsize=9.2)
+        ax9a.set_title("(a) Disjoint Held-Out Per-Patient ROC (chb20–chb23)", fontsize=9.5, fontweight="bold")
+        ax9a.legend(frameon=False, fontsize=8.0, loc="lower right")
+
+        lead_times = g6["summary"]["lead_times_all_s"]
+        med_lt = g6["summary"]["median_lead_time_s"]
+        fa_hr = g6["summary"]["mean_fa_per_hour"]
+        ax9b.hist(lead_times, bins=np.linspace(44, 60, 9), color=PALETTE["D_phase_locked"], edgecolor="#FFFFFF", alpha=0.88)
+        ax9b.axvline(med_lt, color=PALETTE["C_sham"], linestyle="--", linewidth=1.8, label=f"Median Lead Time = {med_lt:.1f} s\n(FA/hr = {fa_hr:.3f}, 5s gap enforced)")
+        ax9b.set_ylim(0, 8.8)
+        ax9b.set_xlabel("Pre-Ictal Warning Lead Time Before Seizure Onset (s)", fontsize=9.2)
+        ax9b.set_ylabel("Seizure Events Count (n = 20)", fontsize=9.2)
+        ax9b.set_title("(b) Pre-Ictal Warning Lead Time Distribution", fontsize=9.5, fontweight="bold")
+        ax9b.legend(frameon=True, facecolor="#FFFFFF", edgecolor="#DDDDDD", fontsize=8.0, loc="upper left")
+
+        fig9.suptitle("Figure 9. Patient-Wise Pre-Ictal Predictor Evaluation (Disjoint Split, 5 s Leakage Gap Enforced)", fontsize=10.5, fontweight="bold", y=1.03)
+        paths.extend(save_fig(fig9, out_dir, "fig9_prediction"))
+
     return paths
 
 

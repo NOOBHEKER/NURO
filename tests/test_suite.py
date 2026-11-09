@@ -18,6 +18,7 @@ from host.hil.dsp_ref import DspChainRef, atan2_q15, isqrt32
 from host.analysis.prc_and_bakeoff import identify_empirical_prc, run_five_arm_bakeoff
 from host.analysis.figures import generate_all_figures
 from host.dash.app import render_dashboard_snapshot
+from host.replay.predictor_eval import evaluate_gate_g5_detector, evaluate_gate_g6_predictor
 from host.virtualbrain.kuramoto import KuramotoBrain, KuramotoConfig
 from host.virtualbrain.jansen_rit import JansenRitBrain, JansenRitConfig
 
@@ -260,10 +261,28 @@ def test_gate_g8_prc_identification_and_five_arm_bakeoff() -> None:
     (GOLDEN_DIR / "five_arm_bakeoff.json").write_text(json.dumps(res, indent=2), encoding="utf-8")
 
 
+def test_gate_g5_and_g6_detector_and_predictor() -> None:
+    """Gates G5 & G6: Int8 LIF SNN detector + disjoint patient-wise 1D-CNN pre-ictal predictor."""
+    g5 = evaluate_gate_g5_detector()
+    assert g5["auroc_int8_lif_snn"] >= 0.95
+    assert g5["auroc_int8_lif_snn"] > g5["auroc_amplitude_baseline"]
+    assert g5["auroc_int8_lif_snn"] > g5["auroc_envelope_z_baseline"]
+    assert g5["resting_active_firing_pct"] < 15.0
+    assert g5["resting_spike_sparsity_pct"] > 85.0
+
+    g6 = evaluate_gate_g6_predictor()
+    assert g6["split_verified_disjoint"] is True
+    for pid, pinfo in g6["per_patient"].items():
+        assert pinfo["auroc_int8_cnn"] >= 0.95, f"Patient {pid} AUROC too low: {pinfo['auroc_int8_cnn']}"
+        assert pinfo["auroc_int8_cnn"] > pinfo["auroc_persistence_baseline"]
+        assert pinfo["median_lead_time_s"] >= 30.0
+    assert g6["summary"]["mean_fa_per_hour"] <= 0.50
+
+
 def test_gate_g10_reproducible_figures_and_dashboard() -> None:
-    """Gate G10: One command regenerates all 8 publication figures (PNG + PDF) and the 4-panel dashboard."""
+    """Gate G10: One command regenerates all 9 publication figures (PNG + PDF) and the 4-panel dashboard."""
     fig_files = generate_all_figures()
-    assert len(fig_files) == 16
+    assert len(fig_files) == 18
     for f in fig_files:
         assert f.exists() and f.stat().st_size > 2048, f"Missing or empty figure: {f}"
 
