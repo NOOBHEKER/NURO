@@ -3,7 +3,10 @@ venv/
 __pycache__/
 *.pyc
 data/raw/
-runs/
+runs/*
+!runs/*/metrics.json
+backups/*
+!backups/README.md
 *.bin
 *.elf
 build/
