@@ -331,11 +331,15 @@ def test_scientific_calculator_and_graph() -> None:
     res3 = calculate_and_graph("x^2 - 4*x - 5 = 0")
     assert "SOLUTIONS FOR x" in res3
 
-    # Single-key operator shorthand: m=*, a=+, s=-, d=/
-    res4 = calculate_and_graph("5 m 3 a 10")
+    # Normal arithmetic signs: *, +, -, /
+    res4 = calculate_and_graph("5 * 3 + 10")
     assert "25" in res4
-    res5 = calculate_and_graph("100 d 4 s 5")
+    res5 = calculate_and_graph("100 / 4 - 5")
     assert "20" in res5
+
+    # Direct quadratic shortcut inside terminal
+    res_quad = calculate_and_graph("quad 1 -5 6")
+    assert "3.0000" in res_quad and "2.0000" in res_quad
 
 
 def test_chemistry_balancer_and_numericals() -> None:

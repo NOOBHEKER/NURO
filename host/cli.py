@@ -114,6 +114,11 @@ def main() -> None:
     p_solve = sub.add_parser("solve", help="Natural-language formula solver with Unicode graph")
     p_solve.add_argument("query", nargs="+", help="Formula or question (e.g. 'sqrt of 16 times pi', 'sin(x)*exp(-x/5)')")
 
+    # nuro term / serial (Direct interactive serial terminal to ESP32-S3 hardware)
+    p_term = sub.add_parser("term", help="Interactive direct serial console to ESP32-S3 on COM6")
+    p_term.add_argument("--port", default="COM6", help="Serial port (default: COM6)")
+    p_term.add_argument("--baud", default=2000000, type=int, help="Baud rate (default: 2000000)")
+
     args, unknown = parser.parse_known_args()
 
     # If first arg is not a known subcommand -> smart route based on query contents!
@@ -233,6 +238,26 @@ def main() -> None:
         v_list = getattr(args, "vault", [])
         v_name = " ".join(v_list) if v_list else None
         print(launch_obsidian_vault(v_name))
+
+    elif cmd in ("term", "serial"):
+        port = getattr(args, "port", "COM6")
+        baud = getattr(args, "baud", 2000000)
+        import serial
+        from serial.tools.miniterm import Miniterm
+        print(f"\033[1;36m[TERMINAL]\033[0m Connecting to ESP32-S3 on {port} @ {baud} baud (Press Ctrl+] to exit)...")
+        ser = serial.Serial(port, baud, timeout=0.1)
+        term = Miniterm(ser, echo=False)
+        term.set_rx_encoding("utf-8")
+        term.set_tx_encoding("utf-8")
+        ser.write(b"\r\n")
+        term.start()
+        try:
+            term.join()
+        except (KeyboardInterrupt, SystemExit):
+            pass
+        finally:
+            term.close()
+            ser.close()
 
     elif cmd == "solve":
         from host.calc import calculate_and_graph

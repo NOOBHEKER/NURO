@@ -114,17 +114,7 @@ def natural_to_sympy_str(text: str) -> str:
     # Strip question starters
     s = re.sub(r"^(what is|calculate|compute|solve|eval|evaluate|graph|plot|find)\s+", "", s, flags=re.I)
 
-    # Single-key operator shorthands: m -> *, a -> +, s -> -, d -> /
-    s = re.sub(r"([0-9\)])\s*m\s*([0-9\(])", r"\1 * \2", s, flags=re.I)
-    s = re.sub(r"([0-9\)])\s*a\s*([0-9\(])", r"\1 + \2", s, flags=re.I)
-    s = re.sub(r"([0-9\)])\s*s\s*([0-9\(])", r"\1 - \2", s, flags=re.I)
-    s = re.sub(r"([0-9\)])\s*d\s*([0-9\(])", r"\1 / \2", s, flags=re.I)
-    s = re.sub(r"\b([0-9\.]+)\s+m\s+([0-9\.]+)\b", r"\1 * \2", s, flags=re.I)
-    s = re.sub(r"\b([0-9\.]+)\s+a\s+([0-9\.]+)\b", r"\1 + \2", s, flags=re.I)
-    s = re.sub(r"\b([0-9\.]+)\s+s\s+([0-9\.]+)\b", r"\1 - \2", s, flags=re.I)
-    s = re.sub(r"\b([0-9\.]+)\s+d\s+([0-9\.]+)\b", r"\1 / \2", s, flags=re.I)
-
-    # Clean words
+    # Clean words (normal signs only: *, +, -, /, **)
     replacements = [
         (r"\b(square root of|sqrt of|square root)\b", "sqrt"),
         (r"\b(cube root of|cbrt of|cube root)\b", "cbrt"),
@@ -191,6 +181,39 @@ def calculate_and_graph(query: str, domain: Optional[Tuple[float, float]] = None
         prompt_text = re.sub(r"^(ai|ask|llm|explain)\s+", "", q_clean, flags=re.I).strip()
         from host.ai import query_gemini
         return query_gemini(prompt_text)
+
+    # Direct quadratic command: "quad 1 -5 6"
+    m_quad = re.match(r"^quad\s+([0-9\.\-]+)[,\s]+([0-9\.\-]+)[,\s]+([0-9\.\-]+)", q_clean, flags=re.I)
+    if m_quad:
+        a_v, b_v, c_v = m_quad.group(1), m_quad.group(2), m_quad.group(3)
+        q_clean = f"{a_v}*x^2 + ({b_v})*x + ({c_v}) = 0"
+        q_clean_low = q_clean.lower()
+
+    # Neural & Hardware direct queries on COM6: neuro, sim burst, sim rest, status
+    if q_clean_low in ("neuro", "sim burst", "burst", "sim rest", "status"):
+        try:
+            import serial
+            import time
+            with serial.Serial("COM6", 2000000, timeout=1.5) as ser:
+                time.sleep(0.05)
+                ser.reset_input_buffer()
+                ser.write(f"{q_clean}\r\n".encode("ascii"))
+                time.sleep(0.4)
+                resp = ser.read_all().decode("utf-8", errors="replace")
+                lines = [l for l in resp.splitlines() if not l.strip().startswith("esp32-s3>")]
+                return "\n".join(lines).strip()
+        except Exception as e:
+            return f"{C_AMBER}[COM6 HARDWARE]: Could not communicate with ESP32-S3: {e}{C_RESET}"
+
+    # Chemistry queries inside calc: mass, chemical formulas with ->, pH
+    if q_clean_low.startswith("mass ") or "->" in q_clean or "➔" in q_clean or any(k in q_clean_low for k in ["titration", "molar mass", "kinetics", "ph "]):
+        from host.chem import solve_chem_numerical
+        return solve_chem_numerical(q_clean)
+
+    # Physics queries inside calc: pascal, projectile, rlc, relativity, bohr
+    if any(k in q_clean_low for k in ["pascal", "hydraulic", "projectile", "proj ", "rlc", "relativity", "bohr"]):
+        from host.phy import solve_physics
+        return solve_physics(q_clean)
 
     # Auto-normalize "solve quadratic ...", "quadratic ..." to an equation
     if "quadratic" in q_clean_low and "=" not in q_clean:
@@ -407,96 +430,42 @@ def calculate_and_graph(query: str, domain: Optional[Tuple[float, float]] = None
     return result_str
 
 
-def calc_get_line(prompt: str, shortcuts_active: bool = True) -> Tuple[str, bool]:
-    """Read a line with live single-key operator mapping:
-    - Pressing 'm' -> prints '*' and buffers '*'
-    - Pressing 'a' -> prints '+' and buffers '+'
-    - Pressing 's' -> prints '-' and buffers '-'
-    - Pressing 'd' -> prints '/' and buffers '/'
-    - Tab or Ctrl+T toggles between [Shortcuts (m=* a=+ s=- d=/)] and [Alpha Mode]
-    """
-    if os.name != "nt":
-        try:
-            return input(prompt), shortcuts_active
-        except Exception:
-            return "", shortcuts_active
-
-    import msvcrt
-    sys.stdout.write(prompt)
-    sys.stdout.flush()
-    buf: List[str] = []
-    mode = shortcuts_active
-
-    while True:
-        try:
-            ch = msvcrt.getwch()
-        except (KeyboardInterrupt, EOFError):
-            raise KeyboardInterrupt
-
-        if ch == "\r":  # Enter
-            sys.stdout.write("\n")
-            sys.stdout.flush()
-            return "".join(buf), mode
-        elif ch == "\x03":  # Ctrl+C
-            sys.stdout.write("\n")
-            sys.stdout.flush()
-            raise KeyboardInterrupt
-        elif ch in ("\t", "\x14"):  # Tab or Ctrl+T -> Toggle Mode
-            mode = not mode
-            # Brief visual feedback on right, then reset
-            tag = f" {C_AMBER}[m=* a=+ s=- d=/]{C_RESET}" if mode else f" {C_GRAY}[ALPHA]{C_RESET}"
-            sys.stdout.write("\r\033[K" + prompt + "".join(buf) + tag)
-            sys.stdout.flush()
-            sys.stdout.write("\r\033[K" + prompt + "".join(buf))
-            sys.stdout.flush()
-        elif ch == "\x08":  # Backspace
-            if buf:
-                buf.pop()
-                sys.stdout.write("\b \b")
-                sys.stdout.flush()
-        elif ch in ("\x00", "\xe0"):
-            msvcrt.getwch()  # skip arrow/function extension code
-        else:
-            if mode:
-                if ch in ("m", "M"):
-                    ch = "*"
-                elif ch in ("a", "A"):
-                    ch = "+"
-                elif ch in ("s", "S"):
-                    ch = "-"
-                elif ch in ("d", "D"):
-                    ch = "/"
-            buf.append(ch)
-            sys.stdout.write(ch)
-            sys.stdout.flush()
+def calc_get_line(prompt: str) -> str:
+    """Read a line with standard terminal input and normal arithmetic signs (*, +, -, /)."""
+    try:
+        return input(prompt)
+    except (KeyboardInterrupt, EOFError):
+        raise KeyboardInterrupt
 
 
 def run_calc_repl() -> None:
-    """Interactive Scientific Graphing Calculator Shell."""
+    """Interactive All-In-One Terminal Shell (Math, Physics, Chemistry, Neural Loop, Obsidian)."""
     if os.name == "nt":
         os.system("")
     print(f"\n{C_BOLD}{C_CYAN}╔═══════════════════════════════════════════════════════════════╗{C_RESET}")
-    print(f"{C_BOLD}{C_CYAN}║     ⚡ nuro-calc — Interactive Scientific Graphing Shell      ║{C_RESET}")
+    print(f"{C_BOLD}{C_CYAN}║     ⚡ nuro — All-In-One Interactive Terminal Shell           ║{C_RESET}")
     print(f"{C_BOLD}{C_CYAN}╚═══════════════════════════════════════════════════════════════╝{C_RESET}")
-    print(f"{C_GRAY}Shortcuts Active:{C_RESET} {C_GREEN}m = *{C_RESET} │ {C_CYAN}a = +{C_RESET} │ {C_AMBER}s = -{C_RESET} │ {C_PURPLE}d = /{C_RESET}  ({C_WHITE}Tab / Ctrl+T{C_RESET} toggles Alpha mode)")
-    print(f"{C_GRAY}Commands:{C_RESET} Type formula, 'obsidian' (open graph view), or 'q' to quit")
-    print(f"{C_GRAY}Examples:{C_RESET} {C_AMBER}5m3a10{C_RESET} (5*3+10) │ {C_CYAN}sin(x)a2{C_RESET} │ {C_PURPLE}x^2 s 4 = 0{C_RESET} │ {C_GREEN}obsidian{C_RESET}\n")
+    print(f"{C_GRAY}Normal Signs Only:{C_RESET} {C_GREEN}* (multiply){C_RESET} │ {C_CYAN}+ (add){C_RESET} │ {C_AMBER}- (subtract){C_RESET} │ {C_PURPLE}/ (divide){C_RESET} │ {C_WHITE}^ or ** (power){C_RESET}")
+    print(f"{C_GRAY}Commands (All in Terminal):{C_RESET}")
+    print(f"  {C_CYAN}Math     :{C_RESET} quad 1 -5 6 │ 5*3 + 10 │ x^2 - 5x + 6 = 0 │ diff sin(x) │ integrate x^2")
+    print(f"  {C_AMBER}Physics  :{C_RESET} pascal 50 0.01 0.5 │ projectile v=50 angle=45 │ rlc R=5 L=50 C=100")
+    print(f"  {C_GREEN}Chemistry:{C_RESET} mass C6H12O6 │ KMnO4 + HCl -> KCl + MnCl2 + H2O + Cl2 │ ph 0.01")
+    print(f"  {C_PURPLE}Neural   :{C_RESET} neuro │ sim burst │ status (ESP32-S3 hardware on COM6)")
+    print(f"  {C_WHITE}Obsidian :{C_RESET} session switch <name> │ to obsidian [vault] │ obsidian\n")
 
-    shortcuts_mode = True
     while True:
         try:
-            raw, shortcuts_mode = calc_get_line(f"{C_BOLD}{C_GREEN}nuro-calc>{C_RESET} ", shortcuts_active=shortcuts_mode)
-            raw = raw.strip()
+            raw = calc_get_line(f"{C_BOLD}{C_GREEN}nuro>{C_RESET} ").strip()
             if not raw:
                 continue
             if raw.lower() in ("exit", "quit", "q"):
-                print(f"{C_GRAY}Exiting nuro-calc.{C_RESET}")
+                print(f"{C_GRAY}Exiting nuro terminal.{C_RESET}")
                 break
             print()
             print(calculate_and_graph(raw))
             print()
         except (KeyboardInterrupt, EOFError):
-            print(f"\n{C_GRAY}Exiting nuro-calc.{C_RESET}")
+            print(f"\n{C_GRAY}Exiting nuro terminal.{C_RESET}")
             break
         except Exception as e:
             print(f"{C_RED}[CALC ERROR]:{C_RESET} {e}\n")
