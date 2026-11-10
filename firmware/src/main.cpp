@@ -28,7 +28,10 @@ static int8_t         g_in_feat[NL_SNN_IN];
 
 static nl_dsp_out_t   g_last_dsp_out;
 static uint8_t        g_last_spikes = 0;
+static uint8_t        g_cur_led_r = 0, g_cur_led_g = 15, g_cur_led_b = 0;
+static uint32_t       g_last_led_update_ms = 0;
 static uint32_t       g_red_led_until_ms = 0;
+static uint32_t       g_yellow_led_until_ms = 0;
 
 /* Deterministic int8 SNN weights (row-major [HID][IN] for L1 cache & SIMD locality) */
 static int8_t g_w1[NL_SNN_HID][NL_SNN_IN];
@@ -48,6 +51,39 @@ static void init_snn_weights(void) {
 void nl_set_status_led(uint8_t r, uint8_t g, uint8_t b) {
     rgbLedWrite(RGB_PIN_V1_0, r, g, b);
     rgbLedWrite(RGB_PIN_V1_1, r, g, b);
+}
+
+/* Hysteresis & rate-limited LED updater (prevents 1000 Hz strobe flicker) */
+static void update_live_status_led(bool is_burst, bool triggered, uint16_t env, uint8_t spikes) {
+    uint32_t now = millis();
+    uint8_t target_r = 0, target_g = 15, target_b = 0; // Default: calm resting Green
+
+    if (triggered) {
+        // Red latch on burst trigger: hold for 250 ms so each pulse is a clean, solid indicator
+        g_red_led_until_ms = now + 250;
+    }
+
+    if (now < g_red_led_until_ms) {
+        target_r = 30; target_g = 0; target_b = 0; // 🔴 RED: Burst Trigger Delivered
+    } else if (is_burst || env >= 220 || spikes >= 3) {
+        // Hold yellow for at least 150 ms so early warning coherence ramp is steady
+        g_yellow_led_until_ms = now + 150;
+        target_r = 20; target_g = 20; target_b = 0; // 🟡 YELLOW: Early Warning Ramp
+    } else if (now < g_yellow_led_until_ms) {
+        target_r = 20; target_g = 20; target_b = 0; // 🟡 YELLOW latch
+    } else {
+        target_r = 0; target_g = 15; target_b = 0;  // 🟢 GREEN: Calm Resting State
+    }
+
+    // Rate-limit physical WS2812 writes to >= 30 ms and only on actual color change
+    if ((target_r != g_cur_led_r || target_g != g_cur_led_g || target_b != g_cur_led_b) &&
+        (now - g_last_led_update_ms >= 30)) {
+        g_cur_led_r = target_r;
+        g_cur_led_g = target_g;
+        g_cur_led_b = target_b;
+        g_last_led_update_ms = now;
+        nl_set_status_led(g_cur_led_r, g_cur_led_g, g_cur_led_b);
+    }
 }
 
 /* Query telemetry for interactive 'neuro' command */
@@ -264,6 +300,7 @@ void loop() {
             g_state = NL_STATE_ARMED;
         }
 
+        bool triggered = false;
         if (g_state == NL_STATE_ARMED && is_burst && in_target_phase && refractory_ok && g_budget_used < 300) {
             digitalWrite(PIN_STIM_OUT, HIGH);
             t_stim = (uint32_t)esp_timer_get_time();
@@ -275,25 +312,15 @@ void loop() {
 
             /* Engage 20 ms stimulation artifact blanking window */
             nl_dsp_notify_stim(&g_dsp);
-
-            /* Trigger Red alert LED */
-            nl_set_status_led(35, 0, 0);
-            g_red_led_until_ms = millis() + 80;
+            triggered = true;
         } else if (!refractory_ok) {
             g_state = NL_STATE_REFRACTORY;
         } else {
             g_state = NL_STATE_ARMED;
         }
 
-        /* Update WS2812 RGB LED status if not in red flash latch */
-        uint32_t now = millis();
-        if (now >= g_red_led_until_ms) {
-            if (is_burst || dsp_out1.env_q15 >= 180 || spike_count >= 2) {
-                nl_set_status_led(20, 20, 0); /* 🟡 Yellow: Early Warning Coherence Ramp */
-            } else {
-                nl_set_status_led(0, 15, 0);  /* 🟢 Green: Normal Resting State */
-            }
-        }
+        /* Update WS2812 RGB LED with 250ms hold latch & rate-limiting (prevents rapid strobing) */
+        update_live_status_led(is_burst, triggered, dsp_out1.env_q15, spike_count);
 
         nl_result_frame_t out_frame;
         out_frame.magic       = NL_MAGIC_RESULT;

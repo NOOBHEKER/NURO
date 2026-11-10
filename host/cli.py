@@ -145,7 +145,7 @@ def main() -> None:
             print(calculate_and_graph(q_raw))
             return
 
-    cmd = args.command or "tui"
+    cmd = args.command or "calc"
 
     if cmd == "tui":
         from host.dash.tui import run_tui
