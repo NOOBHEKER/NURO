@@ -33,6 +33,13 @@ bool nl_calc_is_active(void);
 /* Hardware RGB LED control: safe low-glare levels */
 void nl_set_status_led(uint8_t r, uint8_t g, uint8_t b);
 
+/* Explicit arm gate for GPIO4 stimulation (boot default: disarmed) */
+bool nl_is_armed(void);
+void nl_set_armed(bool armed);
+
+/* One-shot boot self-test: chip, flash, PSRAM, reset reason, MAC */
+void nl_run_boot_selftest(void);
+
 /* Query live neuromodulation DSP / SNN statistics */
 void nl_get_telemetry(nl_live_telemetry_t *telem);
 

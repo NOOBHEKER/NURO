@@ -1,6 +1,12 @@
 #include <Arduino.h>
 #include "esp_timer.h"
 #include "esp_wifi.h"
+#include "esp_system.h"
+#include "esp_chip_info.h"
+#include "esp_flash.h"
+#include "esp_psram.h"
+#include "esp_task_wdt.h"
+#include "esp_mac.h"
 #include "nl_protocol.h"
 #include "nl_dsp.h"
 #include "nl_snn.h"
@@ -14,21 +20,25 @@
  * - Native USB pins (GPIO 19, 20) and UART0 pins (GPIO 43, 44) are managed only by hardware drivers.
  * - Stimulation indicator uses safe general-purpose GPIO 4 only.
  * - Onboard WS2812 RGB LED (GPIO 48 / GPIO 38) operates at safe, low-glare brightness.
+ * - Boot defaults to DISARMED. GPIO4 can only pulse after an explicit `arm` command.
  */
 #define PIN_STIM_OUT     4
 #define RGB_PIN_V1_0    48
 #define RGB_PIN_V1_1    38
+#define NL_STIM_PULSE_US 10U
+#define NL_WDT_TIMEOUT_MS 5000U
 
 static nl_dsp_state_t g_dsp;
 static nl_snn_state_t g_snn;
-static uint8_t        g_state = NL_STATE_ARMED;
+static uint8_t        g_state = NL_STATE_IDLE;
+static bool           g_armed = false;
 static uint16_t       g_budget_used = 0;
 static uint32_t       g_last_stim_us = 0;
 static int8_t         g_in_feat[NL_SNN_IN];
 
 static nl_dsp_out_t   g_last_dsp_out;
 static uint8_t        g_last_spikes = 0;
-static uint8_t        g_cur_led_r = 0, g_cur_led_g = 15, g_cur_led_b = 0;
+static uint8_t        g_cur_led_r = 0, g_cur_led_g = 0, g_cur_led_b = 15;
 static uint32_t       g_last_led_update_ms = 0;
 static uint32_t       g_red_led_until_ms = 0;
 static uint32_t       g_yellow_led_until_ms = 0;
@@ -53,17 +63,37 @@ void nl_set_status_led(uint8_t r, uint8_t g, uint8_t b) {
     rgbLedWrite(RGB_PIN_V1_1, r, g, b);
 }
 
+/* Explicit arm gate. Boot is disarmed; only this function may enable GPIO4. */
+bool nl_is_armed(void) {
+    return g_armed;
+}
+
+void nl_set_armed(bool armed) {
+    g_armed = armed;
+    g_state = armed ? NL_STATE_ARMED : NL_STATE_IDLE;
+    if (armed) {
+        nl_set_status_led(0, 15, 0);
+        Serial.println("  [ARM] GPIO4 stimulation marker ENABLED (green LED).");
+    } else {
+        digitalWrite(PIN_STIM_OUT, LOW);
+        nl_set_status_led(0, 0, 15);
+        Serial.println("  [DISARM] GPIO4 stimulation marker DISABLED (blue LED). Board is safe.");
+    }
+}
+
 /* Hysteresis & rate-limited LED updater (prevents 1000 Hz strobe flicker) */
 static void update_live_status_led(bool is_burst, bool triggered, uint16_t env, uint8_t spikes) {
     uint32_t now = millis();
     uint8_t target_r = 0, target_g = 15, target_b = 0; // Default: calm resting Green
 
-    if (triggered) {
+    if (!g_armed) {
+        // Safe state: dim blue, never show a burst colour while disarmed.
+        target_r = 0; target_g = 0; target_b = 15;
+    } else if (triggered) {
         // Red latch on burst trigger: hold for 250 ms so each pulse is a clean, solid indicator
         g_red_led_until_ms = now + 250;
-    }
-
-    if (now < g_red_led_until_ms) {
+        target_r = 30; target_g = 0; target_b = 0;
+    } else if (now < g_red_led_until_ms) {
         target_r = 30; target_g = 0; target_b = 0; // 🔴 RED: Burst Trigger Delivered
     } else if (is_burst || env >= 220 || spikes >= 3) {
         // Hold yellow for at least 150 ms so early warning coherence ramp is steady
@@ -101,6 +131,10 @@ void nl_get_telemetry(nl_live_telemetry_t *telem) {
 
 /* Synthetic Burst Demonstration */
 void nl_run_sim_burst(void) {
+    if (!g_armed) {
+        Serial.println("\r\n[SAFETY] Board is DISARMED. Type 'arm' first; no pulse was sent.");
+        return;
+    }
     Serial.println("\r\n=======================================================");
     Serial.println("⚡ RUNNING ON-CHIP NEUROMODULATION SYNTHETIC SELF-TEST");
     Serial.println("=======================================================");
@@ -138,11 +172,12 @@ void nl_run_sim_burst(void) {
     nl_set_status_led(35, 0, 0); // Red
     digitalWrite(PIN_STIM_OUT, HIGH);
     uint32_t t_stim = (uint32_t)esp_timer_get_time();
-    delayMicroseconds(100);
+    delayMicroseconds(NL_STIM_PULSE_US);
     digitalWrite(PIN_STIM_OUT, LOW);
 
     g_last_stim_us = t_stim;
     g_budget_used++;
+    g_state = NL_STATE_SUPPRESS;
     nl_dsp_notify_stim(&g_dsp); // Engage 20ms blanking window
     nl_lcd_show_neuro("BURST STIM", 720, -175);
 
@@ -157,8 +192,9 @@ void nl_run_sim_burst(void) {
     delay(200);
 
     // Restore resting
-    nl_set_status_led(0, 15, 0); // Green
-    nl_lcd_show_neuro("RESTING", 50, 0);
+    g_state = g_armed ? NL_STATE_ARMED : NL_STATE_IDLE;
+    nl_set_status_led(0, g_armed ? 15 : 0, g_armed ? 0 : 15); // Green if armed, blue if safe
+    nl_lcd_show_neuro(g_armed ? "RESTING" : "DISARMED", 50, 0);
     Serial.println("  [RESET] Closed-loop restored to resting baseline -> LED 🟢 GREEN\r\n");
 }
 
@@ -166,21 +202,85 @@ void nl_run_sim_burst(void) {
 void nl_run_sim_rest(void) {
     nl_snn_reset(&g_snn);
     nl_dsp_init(&g_dsp);
-    g_state = NL_STATE_ARMED;
-    nl_set_status_led(0, 15, 0);
-    nl_lcd_show_neuro("RESTING", 35, 0);
-    Serial.println("  [RESET] Baseline restored. Neural loop armed in resting state (LED 🟢 GREEN).");
+    g_state = g_armed ? NL_STATE_ARMED : NL_STATE_IDLE;
+    nl_set_status_led(0, g_armed ? 15 : 0, g_armed ? 0 : 15);
+    nl_lcd_show_neuro(g_armed ? "RESTING" : "DISARMED", 35, 0);
+    if (g_armed) {
+        Serial.println("  [RESET] Baseline restored. Neural loop ARMED in resting state (LED 🟢 GREEN).");
+    } else {
+        Serial.println("  [RESET] Baseline restored. Board is DISARMED (LED 🔵 BLUE); type 'arm' to enable GPIO4.");
+    }
+}
+
+/* One-shot boot report: prove which silicon and which memory map is live. */
+static const char *reset_reason_name(esp_reset_reason_t reason) {
+    switch (reason) {
+        case ESP_RST_POWERON:  return "POWERON";
+        case ESP_RST_EXT:      return "EXTERNAL";
+        case ESP_RST_SW:       return "SOFTWARE";
+        case ESP_RST_PANIC:    return "PANIC";
+        case ESP_RST_INT_WDT:  return "INTERRUPT_WDT";
+        case ESP_RST_TASK_WDT: return "TASK_WDT";
+        case ESP_RST_WDT:      return "OTHER_WDT";
+        case ESP_RST_DEEPSLEEP:return "DEEPSLEEP";
+        case ESP_RST_BROWNOUT: return "BROWNOUT";
+        case ESP_RST_SDIO:     return "SDIO";
+        default:               return "UNKNOWN";
+    }
+}
+
+void nl_run_boot_selftest(void) {
+    esp_chip_info_t chip;
+    esp_chip_info(&chip);
+
+    uint32_t flash_bytes = 0;
+    esp_err_t flash_err = esp_flash_get_size(NULL, &flash_bytes);
+    size_t psram_bytes = esp_psram_get_size();
+
+    uint8_t mac[6] = {0};
+    esp_read_mac(mac, ESP_MAC_WIFI_STA);
+
+    Serial.println("\r\n-------------------------------------------------------");
+    Serial.println("  BOOT SELF-TEST (N16R8 TRUTH CHECK)");
+    Serial.printf("  Chip          : ESP32-S3 rev v%d.%d, %d core(s)\r\n",
+                  chip.revision / 100, chip.revision % 100, chip.cores);
+    Serial.printf("  Flash         : %lu MB (esp_flash: %s)\r\n",
+                  (unsigned long)(flash_bytes / (1024UL * 1024UL)),
+                  flash_err == ESP_OK ? "OK" : "ERROR");
+    Serial.printf("  PSRAM         : %u bytes (%s)\r\n",
+                  (unsigned int)psram_bytes,
+                  psram_bytes >= (8U * 1024U * 1024U) ? "8 MB octal OK" : "MISSING / WRONG CONFIG");
+    Serial.printf("  Free heap     : %lu bytes\r\n", (unsigned long)esp_get_free_heap_size());
+    Serial.printf("  Reset reason  : %s\r\n", reset_reason_name(esp_reset_reason()));
+    Serial.printf("  MAC           : %02X:%02X:%02X:%02X:%02X:%02X\r\n",
+                  mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    Serial.printf("  Stim pulse    : %u us on GPIO4\r\n", (unsigned int)NL_STIM_PULSE_US);
+    Serial.printf("  Arm gate      : DISARMED (type 'arm' to enable)\r\n");
+    Serial.println("-------------------------------------------------------");
 }
 
 /* Ring buffer for 32-byte binary frame alignment */
 static uint8_t g_rx_buf[64];
 static size_t  g_rx_len = 0;
 
-void setup() {
-    /* 1. Initialize status LED to calm resting green (safe, low-glare) */
-    nl_set_status_led(0, 15, 0);
+static void init_watchdog(void) {
+    esp_task_wdt_config_t cfg;
+    cfg.timeout_ms = NL_WDT_TIMEOUT_MS;
+    cfg.idle_core_mask = 0;
+    cfg.trigger_panic = true;
+    esp_err_t err = esp_task_wdt_init(&cfg);
+    if (err == ESP_ERR_INVALID_STATE) {
+        /* Arduino may have initialized the TWDT already; adopt our timeout. */
+        esp_task_wdt_reconfigure(&cfg);
+    }
+    esp_task_wdt_add(NULL);
+}
 
-    /* 2. Configure safe stimulation marker pin */
+void setup() {
+    /* 1. Initialize status LED to safe disarmed blue (low-glare) */
+    nl_set_status_led(0, 0, 15);
+
+    /* 2. Configure safe stimulation marker pin, driven low before anything else */
     pinMode(PIN_STIM_OUT, OUTPUT);
     digitalWrite(PIN_STIM_OUT, LOW);
 
@@ -200,22 +300,29 @@ void setup() {
     /* 6. Initialize embedded Pocket Lab */
     nl_calc_init();
 
-    /* 7. Print Welcome Startup Banner */
+    /* 7. Hardware watchdog: a hung loop resets the board instead of leaving GPIO4 in an unknown state */
+    init_watchdog();
+
+    /* 8. Print the verified silicon report, then the welcome banner */
+    nl_run_boot_selftest();
     Serial.println("\r\n=======================================================");
     Serial.println("⚡ NEURAL LOOP & SCIENTIFIC POCKET LAB (ESP32-S3)");
     Serial.println("=======================================================");
     Serial.println("  Core: Xtensa Dual-Core LX7 @ 240 MHz | Hardware FPU");
     Serial.println("  DSP: 61-tap Q15 Quadrature FIR | 64-neuron Int8 LIF SNN");
     Serial.println("  Stimulus Pin: GPIO 4 | RGB LED: GPIO 48/38");
-    Serial.println("  Status: 🟢 RESTING (Armed @ 1000 Hz lockstep)");
+    Serial.println("  Status: 🔵 DISARMED (safe) — type 'arm' to enable GPIO4");
     Serial.println("-------------------------------------------------------");
     Serial.println("  Type 'help' for Scientific Lab (Math/Physics/Chem)");
-    Serial.println("  Type 'sim burst' to test Early-Warning & Phase Stimulus");
+    Serial.println("  Type 'arm' then 'sim burst' for the phase-locked self-test");
     Serial.println("=======================================================");
     Serial.print("esp32-s3> ");
 }
 
 void loop() {
+    /* 0. Feed the watchdog once per scheduler pass */
+    esp_task_wdt_reset();
+
     /* 1. Demultiplex incoming bytes:
      *    - If byte is ASCII, route immediately to interactive Pocket Lab REPL.
      *    - If magic 0xC3, 0xA5 arrives, accumulate full 32-byte binary DSP frame.
@@ -296,14 +403,17 @@ void loop() {
         bool refractory_ok = ((t_dec - g_last_stim_us) >= 15000U);
 
         uint32_t t_stim = 0;
-        if ((in_frame->flags & 0x02U) || is_burst) {
+        if (!g_armed) {
+            g_state = NL_STATE_IDLE;
+        } else if ((in_frame->flags & 0x02U) || is_burst) {
             g_state = NL_STATE_ARMED;
         }
 
         bool triggered = false;
-        if (g_state == NL_STATE_ARMED && is_burst && in_target_phase && refractory_ok && g_budget_used < 300) {
+        if (g_armed && g_state == NL_STATE_ARMED && is_burst && in_target_phase && refractory_ok && g_budget_used < 300) {
             digitalWrite(PIN_STIM_OUT, HIGH);
             t_stim = (uint32_t)esp_timer_get_time();
+            delayMicroseconds(NL_STIM_PULSE_US);
             digitalWrite(PIN_STIM_OUT, LOW);
 
             g_last_stim_us = t_stim;
@@ -313,6 +423,8 @@ void loop() {
             /* Engage 20 ms stimulation artifact blanking window */
             nl_dsp_notify_stim(&g_dsp);
             triggered = true;
+        } else if (!g_armed) {
+            g_state = NL_STATE_IDLE;
         } else if (!refractory_ok) {
             g_state = NL_STATE_REFRACTORY;
         } else {

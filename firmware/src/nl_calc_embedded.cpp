@@ -387,9 +387,16 @@ void nl_calc_exec_command(const char *cmd_line) {
         Serial.println("    ph <conc> [base]         : Solution pH/pOH calculation");
         Serial.println("  NEURAL TESTS:");
         Serial.println("    neuro                    : Live on-chip DSP envelope, phase & pulse stats");
-        Serial.println("    sim burst                : Self-test 20Hz burst alert (LED & Pin 4 pulse)");
+        Serial.println("    sim burst                : Self-test 20Hz burst alert (requires 'arm')");
         Serial.println("    sim rest                 : Restore normal baseline noise");
         Serial.println("    status                   : Chip CPU frequency, free heap & PSRAM");
+        Serial.println("  SAFETY:");
+        Serial.println("    arm                      : Enable GPIO4 stimulation marker (boot = disarmed)");
+        Serial.println("    disarm                   : Disable GPIO4 immediately and go safe");
+    } else if (strcmp(cmd, "arm") == 0) {
+        nl_set_armed(true);
+    } else if (strcmp(cmd, "disarm") == 0) {
+        nl_set_armed(false);
     } else if (strcmp(cmd, "quad") == 0) {
         float a = 1.0f, b = 0.0f, c = 0.0f;
         if (sscanf(args, "%f %f %f", &a, &b, &c) >= 3) {
@@ -445,8 +452,11 @@ void nl_calc_exec_command(const char *cmd_line) {
         Serial.printf("  Filter Pipeline           : 61-tap Q15 Quadrature FIR @ 1000 Hz\r\n");
         Serial.printf("  Classifier Network        : 64-neuron Int8 Leaky Integrate-and-Fire SNN\r\n");
         Serial.printf("  Loop Controller State     : %s (0x%02X)\r\n",
-                      (telem.state == 1) ? "ARMED" : (telem.state == 2) ? "SUPPRESS" : "REFRACTORY",
+                      (telem.state == 0) ? "DISARMED" :
+                      (telem.state == 1) ? "ARMED" :
+                      (telem.state == 2) ? "SUPPRESS" : "REFRACTORY",
                       telem.state);
+        Serial.printf("  Stimulation Gate          : %s\r\n", nl_is_armed() ? "ARMED (GPIO4 live)" : "DISARMED (GPIO4 safe)");
         Serial.printf("  Exponential Mean Envelope : %ld\r\n", (long)telem.env_mean_q15);
         Serial.printf("  Instantaneous Envelope    : %d\r\n", (int)telem.last_env_q15);
         Serial.printf("  Compensated Phase Angle   : %+.1f° (%d Q15)\r\n", phase_deg, (int)telem.last_phase_q15);
@@ -475,6 +485,7 @@ void nl_calc_exec_command(const char *cmd_line) {
         Serial.printf("  Free Internal SRAM        : %lu bytes\r\n", (unsigned long)ESP.getFreeHeap());
         Serial.printf("  Free Octal PSRAM          : %lu bytes\r\n", (unsigned long)ESP.getFreePsram());
         Serial.printf("  Flash Chip Size           : %lu MB\r\n", (unsigned long)(ESP.getFlashChipSize() / (1024 * 1024)));
+        Serial.printf("  Stimulation Gate          : %s\r\n", nl_is_armed() ? "ARMED (GPIO4 live)" : "DISARMED (GPIO4 safe)");
         Serial.printf("  System Uptime             : %.2f seconds\r\n", millis() / 1000.0f);
         Serial.printf("  I2C 16x2 LCD              : %s\r\n", nl_lcd_is_present() ? "Detected (0x27/0x3F)" : "None (Silent)");
     } else {
