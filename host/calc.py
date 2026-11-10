@@ -151,6 +151,20 @@ def natural_to_sympy_str(text: str) -> str:
         if f == "cbrt":
             s = re.sub(r"\bcbrt\(([^)]+)\)", r"((\1)**(1/3))", s, flags=re.I)
 
+    # Implicit multiplication expansion:
+    # 1. Number adjacent to variable: 5x -> 5*x, 3x^2 -> 3*x^2
+    s = re.sub(r"(\d+)\s*([a-df-zA-DF-Z])", r"\1*\2", s)
+    s = re.sub(r"(\d+)\s*(e)(?![+-]?\d)", r"\1*\2", s)
+
+    # 2. Parens adjacent to parens, numbers, or variables: (x-1)(x+2) -> (x-1)*(x+2), 2(x+1) -> 2*(x+1)
+    s = re.sub(r"\)\s*\(", ")*(", s)
+    s = re.sub(r"(\d+)\s*\(", r"\1*(", s)
+    s = re.sub(r"\)\s*([a-zA-Z0-9])", r")*\1", s)
+    s = re.sub(r"\b([xXyYzZ])\s*\(", r"\1*(", s)
+
+    # 3. Closing paren adjacent to letter or digit: (x+1)x -> (x+1)*x, (x+1)5 -> (x+1)*5
+    s = re.sub(r"(\))\s*([a-zA-Z0-9])", r"\1*\2", s)
+
     return s
 
 
@@ -172,29 +186,92 @@ def calculate_and_graph(query: str, domain: Optional[Tuple[float, float]] = None
     if q_clean_low in ("obsidian", "graph", "vault", "sync"):
         return launch_obsidian_vault(target_vault)
 
+    # 0. Direct AI / LLM Query trigger: e.g. "ai explain quadratic formula" or "ask ..."
+    if q_clean_low.startswith(("ai ", "ask ", "llm ", "explain ")):
+        prompt_text = re.sub(r"^(ai|ask|llm|explain)\s+", "", q_clean, flags=re.I).strip()
+        from host.ai import query_gemini
+        return query_gemini(prompt_text)
+
+    # Auto-normalize "solve quadratic ...", "quadratic ..." to an equation
+    if "quadratic" in q_clean_low and "=" not in q_clean:
+        q_clean = re.sub(r"^(solve quadratic equation|solve quadratic|quadratic equation|quadratic)\s+", "", q_clean, flags=re.I).strip()
+        if "=" not in q_clean:
+            q_clean = f"{q_clean} = 0"
+
     out: List[str] = []
     x = sp.Symbol("x")
 
-    # 1. Check for Equation Solving: "x^2 - 5*x + 6 = 0" or "solve 2*x + 4 = 10"
+    # 1. Check for Equation Solving: "x^2 - 5x + 6 = 0" or "solve 2x + 4 = 10"
     if "=" in q_clean:
-        left_str, right_str = q_clean.split("=", 1)
-        sym_left = sp.sympify(natural_to_sympy_str(left_str))
-        sym_right = sp.sympify(natural_to_sympy_str(right_str))
-        eq = sp.Eq(sym_left, sym_right)
-        syms = list(eq.free_symbols)
-        var_x = syms[0] if syms else x
-        sol = sp.solve(eq, var_x)
+        try:
+            left_str, right_str = q_clean.split("=", 1)
+            sym_left = sp.sympify(natural_to_sympy_str(left_str))
+            sym_right = sp.sympify(natural_to_sympy_str(right_str))
+            eq = sp.Eq(sym_left, sym_right)
+            syms = list(eq.free_symbols)
+            var_x = syms[0] if syms else x
+            f_diff = sym_left - sym_right
+            f_lamb = sp.lambdify(var_x, f_diff, modules=["numpy"])
 
-        out.append(f"{C_BOLD}{C_GREEN}⚡ EQUATION SOLVER:{C_RESET} {C_WHITE}{eq}{C_RESET}")
-        out.append(f"{C_AMBER}▶ SOLUTIONS FOR {var_x}:{C_RESET} {C_BOLD}{C_CYAN}{sol}{C_RESET}")
+            # Check if this is a Quadratic Equation (degree 2 polynomial)
+            try:
+                poly = sp.Poly(f_diff, var_x)
+                if poly.degree() == 2:
+                    coeffs = poly.all_coeffs()
+                    a_val, b_val, c_val = coeffs[0], coeffs[1], coeffs[2]
+                    disc = b_val**2 - 4 * a_val * c_val
+                    out.append(f"{C_BOLD}{C_GREEN}⚡ QUADRATIC EQUATION SOLVER:{C_RESET} {C_WHITE}{a_val}·{var_x}² + ({b_val})·{var_x} + ({c_val}) = 0{C_RESET}")
+                    out.append(f"  {C_GRAY}Coefficients          :{C_RESET} a = {a_val}, b = {b_val}, c = {c_val}")
+                    out.append(f"  {C_AMBER}Discriminant Δ=b²-4ac  :{C_RESET} {C_BOLD}{C_CYAN}{disc}{C_RESET} ({float(disc.evalf()):.4f})")
+                    if disc > 0:
+                        nature = "Two Distinct Real Roots"
+                    elif disc == 0:
+                        nature = "One Repeated Real Root (Double Root)"
+                    else:
+                        nature = "Two Complex Conjugate Roots"
+                    out.append(f"  {C_GRAY}Nature of Roots       :{C_RESET} {nature}")
+                    out.append(f"  {C_GRAY}Quadratic Formula     :{C_RESET} {var_x} = (-b ± √Δ) / 2a")
 
-        # Graph f(x) = left - right
-        f_diff = sym_left - sym_right
-        f_lamb = sp.lambdify(var_x, f_diff, modules=["numpy"])
-        xs = np.linspace(-10.0, 10.0, 300)
-        ys = f_lamb(xs)
-        out.append(render_braille_curve(xs, [(ys, C_CYAN, f"{f_diff} = 0")]))
-        return "\n".join(out)
+                    roots = sp.solve(eq, var_x)
+                    r_strs = [f"{r} ({float(r.evalf()):.4f})" if getattr(r, 'is_real', False) else str(r) for r in roots]
+                    out.append(f"  {C_BOLD}{C_GREEN}▶ SOLUTIONS FOR {var_x}     :{C_RESET} {C_BOLD}{C_WHITE}{', '.join(r_strs)}{C_RESET}")
+
+                    h_v = -b_val / (2 * a_val)
+                    k_v = c_val - (b_val**2) / (4 * a_val)
+                    out.append(f"  {C_PURPLE}Parabola Vertex (h,k) :{C_RESET} ({float(h_v.evalf()):.3f}, {float(k_v.evalf()):.3f})  │  Axis: {var_x} = {float(h_v.evalf()):.3f}")
+
+                    h_f = float(h_v.evalf())
+                    xs = np.linspace(h_f - 6.0, h_f + 6.0, 300)
+                    ys = f_lamb(xs)
+                    out.append(render_braille_curve(xs, [(ys, C_CYAN, f"y = {f_diff}")]))
+                    res = "\n".join(out)
+                    from host.session_manager import record_calc_in_session
+                    record_calc_in_session("Math", q_clean, res)
+                    if target_vault:
+                        note_p = record_session_calculation("Math", f"Quadratic - {q_clean[:30]}", q_clean, res, ["math", "quadratic"], ["Quadratic Equation", "Algebra"], vault_name=target_vault)
+                        res += f"\n\n{C_BOLD}{C_GREEN}💾 SAVED TO OBSIDIAN VAULT [{target_vault}]:{C_RESET}\n  {C_GRAY}Session Note :{C_RESET} {C_CYAN}{note_p.name}{C_RESET}"
+                    return res
+            except Exception:
+                pass
+
+            sol = sp.solve(eq, var_x)
+            out.append(f"{C_BOLD}{C_GREEN}⚡ EQUATION SOLVER:{C_RESET} {C_WHITE}{eq}{C_RESET}")
+            out.append(f"{C_AMBER}▶ SOLUTIONS FOR {var_x}:{C_RESET} {C_BOLD}{C_CYAN}{sol}{C_RESET}")
+
+            xs = np.linspace(-10.0, 10.0, 300)
+            ys = f_lamb(xs)
+            out.append(render_braille_curve(xs, [(ys, C_CYAN, f"{f_diff} = 0")]))
+            res = "\n".join(out)
+            from host.session_manager import record_calc_in_session
+            record_calc_in_session("Math", q_clean, res)
+            if target_vault:
+                note_p = record_session_calculation("Math", f"Equation - {q_clean[:30]}", q_clean, res, ["math", "equations"], ["Algebra"], vault_name=target_vault)
+                res += f"\n\n{C_BOLD}{C_GREEN}💾 SAVED TO OBSIDIAN VAULT [{target_vault}]:{C_RESET}\n  {C_GRAY}Session Note :{C_RESET} {C_CYAN}{note_p.name}{C_RESET}"
+            return res
+        except Exception:
+            # Fallback to LLM on parsing failure
+            from host.ai import query_gemini
+            return query_gemini(f"Solve equation: {q_clean}")
 
     # 2. Check for Derivative query: "derivative of ..." / "diff ..."
     if q_clean.lower().startswith(("diff", "derivative")):

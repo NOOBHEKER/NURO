@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Neural Loop &amp; Scientific Pocket Lab | ESP32-S3 Web Serial</title>
+  <style>
+    :root {
+      --bg: #0b0f19;
+      --card-bg: #111827;
+      --card-border: #1f2937;
+      --accent: #38bdf8;
+      --accent-hover: #0ea5e9;
+      --text: #f3f4f6;
+      --text-muted: #9ca3af;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --term-bg: #030712;
+      --font-mono: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      padding: 1rem;
+    }
+
+    header {
+      max-width: 1200px;
+      margin: 0 auto 1.5rem auto;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 1rem;
+      border-bottom: 1px solid var(--card-border);
+      padding-bottom: 1rem;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .brand-logo {
+      width: 40px;
+      height: 40px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #0284c7, #6366f1);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      font-size: 1.25rem;
+    }
+
+    .brand h1 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      letter-spacing: -0.025em;
+    }
+
+    .brand p {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    .connection-panel {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    select, button, input {
+      font-family: inherit;
+      font-size: 0.875rem;
+      border-radius: 6px;
+      border: 1px solid var(--card-border);
+    }
+
+    select {
+      background: var(--card-bg);
+      color: var(--text);
+      padding: 0.5rem 0.75rem;
+      outline: none;
+    }
+
+    button {
+      padding: 0.5rem 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .btn-connect {
+      background: var(--accent);
+      color: #030712;
+      border: none;
+    }
+    .btn-connect:hover { background: var(--accent-hover); }
+
+    .btn-disconnect {
+      background: #374151;
+      color: #f87171;
+      border: 1px solid #4b5563;
+    }
+    .btn-disconnect:hover { background: #4b5563; }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.35rem 0.75rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      background: #1f2937;
+      color: var(--text-muted);
+    }
+    .status-badge.connected {
+      background: rgba(16, 185, 129, 0.15);
+      color: var(--success);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .main-grid {
+      max-width: 1200px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 360px 1fr;
+      gap: 1.25rem;
+    }
+
+    @media (max-width: 900px) {
+      .main-grid { grid-template-columns: 1fr; }
+    }
+
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .card-title {
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .indicator-box {
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 0.75rem;
+      background: #0d131f;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .led-status {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.5rem;
+      border-radius: 6px;
+      background: #111827;
+      border: 1px solid #1f2937;
+    }
+
+    .led-bulb {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #374151;
+      box-shadow: 0 0 4px #000;
+      transition: all 0.2s ease;
+    }
+
+    .led-bulb.green {
+      background: #10b981;
+      box-shadow: 0 0 12px #10b981;
+    }
+    .led-bulb.yellow {
+      background: #f59e0b;
+      box-shadow: 0 0 14px #f59e0b;
+    }
+    .led-bulb.red {
+      background: #ef4444;
+      box-shadow: 0 0 18px #ef4444;
+    }
+
+    .action-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+    .action-group-title {
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+    }
+    .btn-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.4rem;
+    }
+    .btn-action {
+      background: #1e293b;
+      color: #e2e8f0;
+      border: 1px solid #334155;
+      font-size: 0.75rem;
+      padding: 0.4rem 0.6rem;
+      justify-content: flex-start;
+      border-radius: 4px;
+    }
+    .btn-action:hover {
+      background: #334155;
+      color: #fff;
+    }
+    .btn-neural-burst {
+      background: rgba(239, 68, 68, 0.15);
+      border-color: rgba(239, 68, 68, 0.4);
+      color: #fca5a5;
+    }
+    .btn-neural-burst:hover {
+      background: rgba(239, 68, 68, 0.3);
+      color: #fff;
+    }
+
+    .terminal-container {
+      background: var(--term-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      display: flex;
+      flex-direction: column;
+      height: 640px;
+      overflow: hidden;
+    }
+
+    .terminal-header {
+      background: #0f172a;
+      padding: 0.6rem 1rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--card-border);
+    }
+    .terminal-title {
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+    .btn-clear {
+      background: transparent;
+      border: 1px solid #334155;
+      color: var(--text-muted);
+      font-size: 0.7rem;
+      padding: 0.2rem 0.5rem;
+    }
+    .btn-clear:hover {
+      color: var(--text);
+      background: #1e293b;
+    }
+
+    #terminal {
+      flex: 1;
+      padding: 1rem;
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      line-height: 1.45;
+      color: #38bdf8;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .input-bar {
+      display: flex;
+      background: #0f172a;
+      border-top: 1px solid var(--card-border);
+      padding: 0.5rem;
+      gap: 0.5rem;
+    }
+
+    .input-bar input {
+      flex: 1;
+      background: #030712;
+      border: 1px solid #334155;
+      color: #fff;
+      padding: 0.5rem 0.75rem;
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      outline: none;
+    }
+    .input-bar input:focus {
+      border-color: var(--accent);
+    }
+
+    .btn-send {
+      background: var(--accent);
+      color: #030712;
+      border: none;
+      font-weight: 700;
+    }
+    .btn-send:hover { background: var(--accent-hover); }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="brand">
+      <div class="brand-logo">⚡</div>
+      <div>
+        <h1>NEURAL LOOP &bull; SCIENTIFIC POCKET LAB</h1>
+        <p>ESP32-S3 Dual-Mode Firmware &bull; Autonomous Neuromodulation + Math/Phy/Chem</p>
+      </div>
+    </div>
+
+    <div class="connection-panel">
+      <select id="baudRate">
+        <option value="2000000" selected>2,000,000 Baud (Fast)</option>
+        <option value="921600">921,600 Baud</option>
+        <option value="115200">115,200 Baud</option>
+      </select>
+      <button id="connectBtn" class="btn-connect">Connect ESP32-S3</button>
+      <div id="statusBadge" class="status-badge">
+        <span class="status-dot"></span>
+        <span id="statusText">Disconnected</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="main-grid">
+    <!-- Controls & Quick Actions -->
+    <div class="card">
+      <div class="card-title">
+        <span>Hardware &amp; LED Telemetry</span>
+      </div>
+
+      <div class="indicator-box">
+        <div class="led-status">
+          <div id="ledBulb" class="led-bulb"></div>
+          <div>
+            <div id="ledLabel" style="font-weight: 700; font-size: 0.85rem;">Standby</div>
+            <div id="ledDesc" style="font-size: 0.7rem; color: var(--text-muted);">Connect board over USB Serial</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="action-group">
+        <div class="action-group-title">Neuromodulation Early-Warning</div>
+        <button class="btn-action btn-neural-burst" onclick="sendCommand('sim burst')">⚡ sim burst (Trigger Alert + Pulse)</button>
+        <div class="btn-grid">
+          <button class="btn-action" onclick="sendCommand('neuro')">🧠 neuro (DSP Stats)</button>
+          <button class="btn-action" onclick="sendCommand('sim rest')">🌿 sim rest (Reset Green)</button>
+        </div>
+      </div>
+
+      <div class="action-group">
+        <div class="action-group-title">Mathematics Lab</div>
+        <div class="btn-grid">
+          <button class="btn-action" onclick="sendCommand('quad 1 -5 6')">📐 quad 1 -5 6</button>
+          <button class="btn-action" onclick="sendCommand('quad 1 -4 4')">📐 quad 1 -4 4</button>
+          <button class="btn-action" onclick="sendCommand('quad 1 2 5')">📐 quad 1 2 5 (i)</button>
+          <button class="btn-action" onclick="sendCommand('help')">❓ help menu</button>
+        </div>
+      </div>
+
+      <div class="action-group">
+        <div class="action-group-title">Physics Engine</div>
+        <div class="btn-grid">
+          <button class="btn-action" onclick="sendCommand('pascal 50 0.01 0.5')">💧 pascal 50 0.01 0.5</button>
+          <button class="btn-action" onclick="sendCommand('proj 50 45')">🚀 proj 50 45°</button>
+          <button class="btn-action" onclick="sendCommand('rlc 5 50 100')">⚡ rlc 5Ω 50mH 100µF</button>
+          <button class="btn-action" onclick="sendCommand('status')">📟 status (HW)</button>
+        </div>
+      </div>
+
+      <div class="action-group">
+        <div class="action-group-title">Chemistry Periodic Table</div>
+        <div class="btn-grid">
+          <button class="btn-action" onclick="sendCommand('mass C6H12O6')">🧪 mass C6H12O6</button>
+          <button class="btn-action" onclick="sendCommand('mass CuSO4')">🧪 mass CuSO4</button>
+          <button class="btn-action" onclick="sendCommand('mass KMnO4')">🧪 mass KMnO4</button>
+          <button class="btn-action" onclick="sendCommand('ph 0.01')">⚗️ ph 0.01 (Acid)</button>
+          <button class="btn-action" onclick="sendCommand('ph 0.05 base')">⚗️ ph 0.05 (Base)</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Live Serial Interactive Terminal -->
+    <div class="terminal-container">
+      <div class="terminal-header">
+        <div class="terminal-title">ESP32-S3 SERIAL REPL (NO INSTALLATION REQUIRED)</div>
+        <button class="btn-clear" onclick="clearTerminal()">Clear</button>
+      </div>
+      <div id="terminal">⚡ Welcome to the Autonomous ESP32-S3 Neural Loop &amp; Pocket Lab.
+Click [Connect ESP32-S3] to begin communicating with the board.
+Supports any PC, Chromebook, Mac, or Linux machine over Web Serial.
+</div>
+      <form class="input-bar" id="inputForm" onsubmit="handleFormSubmit(event)">
+        <input type="text" id="cmdInput" placeholder="Type command (e.g. quad 1 -5 6, mass H2O, sim burst, help)..." autocomplete="off" disabled>
+        <button type="submit" id="sendBtn" class="btn-send" disabled>Send</button>
+      </form>
+    </div>
+  </main>
+
+  <script>
+    let port = null;
+    let reader = null;
+    let writer = null;
+    let readableStreamClosed = null;
+    let writableStreamClosed = null;
+    let isConnected = false;
+    let cmdHistory = [];
+    let historyIdx = -1;
+
+    const connectBtn = document.getElementById('connectBtn');
+    const baudSelect = document.getElementById('baudRate');
+    const statusBadge = document.getElementById('statusBadge');
+    const statusText = document.getElementById('statusText');
+    const terminal = document.getElementById('terminal');
+    const cmdInput = document.getElementById('cmdInput');
+    const sendBtn = document.getElementById('sendBtn');
+    const ledBulb = document.getElementById('ledBulb');
+    const ledLabel = document.getElementById('ledLabel');
+    const ledDesc = document.getElementById('ledDesc');
+
+    function updateLED(state) {
+      ledBulb.className = 'led-bulb ' + state;
+      if (state === 'green') {
+        ledLabel.textContent = 'RESTING (🟢 GREEN)';
+        ledDesc.textContent = 'Neural baseline normal, filter armed';
+      } else if (state === 'yellow') {
+        ledLabel.textContent = 'EARLY WARNING (🟡 YELLOW)';
+        ledDesc.textContent = 'Phase coherence ramp detected!';
+      } else if (state === 'red') {
+        ledLabel.textContent = 'BURST ALERT (🔴 RED)';
+        ledDesc.textContent = 'Trough stimulus triggered on GPIO 4!';
+      } else {
+        ledLabel.textContent = 'STANDBY';
+        ledDesc.textContent = 'Ready for connection';
+      }
+    }
+
+    function appendTerminal(text) {
+      terminal.textContent += text;
+      terminal.scrollTop = terminal.scrollHeight;
+
+      // Update LED telemetry based on serial output
+      if (text.includes("EARLY WARNING") || text.includes("YELLOW")) {
+        updateLED('yellow');
+      } else if (text.includes("BURST DETECTED") || text.includes("TRIGGERED") || text.includes("🔴 RED")) {
+        updateLED('red');
+      } else if (text.includes("Baseline restored") || text.includes("RESTING") || text.includes("🟢 GREEN")) {
+        updateLED('green');
+      }
+    }
+
+    function clearTerminal() {
+      terminal.textContent = '';
+    }
+
+    async function connectSerial() {
+      if (!('serial' in navigator)) {
+        alert('Web Serial API is not supported in this browser. Please use Google Chrome, Microsoft Edge, or Opera.');
+        return;
+      }
+
+      try {
+        port = await navigator.serial.requestPort();
+        const baudRate = parseInt(baudSelect.value, 10);
+        await port.open({ baudRate });
+
+        isConnected = true;
+        connectBtn.textContent = 'Disconnect';
+        connectBtn.className = 'btn-disconnect';
+        statusBadge.className = 'status-badge connected';
+        statusText.textContent = `Connected (${baudRate} baud)`;
+        cmdInput.disabled = false;
+        sendBtn.disabled = false;
+        updateLED('green');
+
+        appendTerminal(`\r\n[PORT OPENED @ ${baudRate} BAUD]\r\n`);
+
+        // Send a carriage return to trigger prompt
+        const textEncoder = new TextEncoderStream();
+        writableStreamClosed = textEncoder.readable.pipeTo(port.writable);
+        writer = textEncoder.writable.getWriter();
+        await writer.write('\r\n');
+
+        readLoop();
+      } catch (err) {
+        console.error(err);
+        appendTerminal(`\r\n[ERROR]: ${err.message}\r\n`);
+      }
+    }
+
+    async function disconnectSerial() {
+      if (!port) return;
+      try {
+        if (reader) {
+          await reader.cancel();
+          await readableStreamClosed.catch(() => {});
+          reader = null;
+        }
+        if (writer) {
+          await writer.close();
+          await writableStreamClosed;
+          writer = null;
+        }
+        await port.close();
+        port = null;
+      } catch (err) {
+        console.error(err);
+      }
+      isConnected = false;
+      connectBtn.textContent = 'Connect ESP32-S3';
+      connectBtn.className = 'btn-connect';
+      statusBadge.className = 'status-badge';
+      statusText.textContent = 'Disconnected';
+      cmdInput.disabled = true;
+      sendBtn.disabled = true;
+      updateLED('');
+      appendTerminal('\r\n[PORT DISCONNECTED]\r\n');
+    }
+
+    connectBtn.addEventListener('click', () => {
+      if (isConnected) {
+        disconnectSerial();
+      } else {
+        connectSerial();
+      }
+    });
+
+    async function readLoop() {
+      while (port && port.readable) {
+        const textDecoder = new TextDecoderStream();
+        readableStreamClosed = port.readable.pipeTo(textDecoder.writable);
+        reader = textDecoder.readable.getReader();
+        try {
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            if (value) {
+              appendTerminal(value);
+            }
+          }
+        } catch (err) {
+          console.error(err);
+          break;
+        } finally {
+          reader.releaseLock();
+        }
+      }
+    }
+
+    async function sendCommand(cmd) {
+      if (!writer) {
+        appendTerminal('\r\n[WARNING]: Please connect to the ESP32-S3 first.\r\n');
+        return;
+      }
+      await writer.write(cmd + '\r\n');
+    }
+
+    function handleFormSubmit(e) {
+      e.preventDefault();
+      const val = cmdInput.value.trim();
+      if (!val) return;
+      cmdHistory.push(val);
+      historyIdx = cmdHistory.length;
+      sendCommand(val);
+      cmdInput.value = '';
+    }
+
+    cmdInput.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowUp') {
+        if (historyIdx > 0) {
+          historyIdx--;
+          cmdInput.value = cmdHistory[historyIdx];
+        }
+      } else if (e.key === 'ArrowDown') {
+        if (historyIdx < cmdHistory.length - 1) {
+          historyIdx++;
+          cmdInput.value = cmdHistory[historyIdx];
+        } else {
+          historyIdx = cmdHistory.length;
+          cmdInput.value = '';
+        }
+      }
+    });
+  </script>
+</body>
+</html>
