@@ -1,11 +1,20 @@
-"""Week 5 & Week 6 Evaluation Engine:
-- Gate G5: Int8 LIF SNN Burst Detector vs. Amplitude & Envelope Z-Score Baselines (AUROC + Sparsity)
-- Gate G6: Patient-Wise Pre-Ictal 1D-CNN Predictor (Per-Patient AUROC, Lead Time in s, False Alarms/hr)
-  Strictly enforces the 3 leakage guards from 'Predictive Layer - 1D CNN.md':
-  1. Disjoint patient-wise split (Train: patients 1..16, Val: 17..19, Test: 20..23)
-  2. Strict 5-second pre-onset gap: Pre-ictal = [onset - 60 s, onset - 5 s]
-  3. Train-only normalization statistics
+"""Synthetic-surrogate evaluation engine for Gates G5 and G6 (Phase 0).
+
+IMPORTANT SCOPE NOTE
+--------------------
+These gates currently run on **synthetic signals generated inside this module**.
+They are **not** CHB-MIT results and must never be presented as such. The
+patient identifiers (`chb20`..`chb23`) are labels on synthetic surrogates, not
+records from PhysioNet. A real EDF loader + patient-wise split is Phase 2 work;
+until it lands, every output carries ``data_source = "synthetic_surrogate"``.
+
+- Gate G5: Int8 LIF detector vs amplitude & envelope-z baselines on synthetic
+  non-stationary background + beta bursts (AUROC + sparsity).
+- Gate G6: Pre-ictal predictor on synthetic 8-channel feature trajectories with
+  the three leakage guards described below (disjoint pseudo-patients, 5 s gap,
+  train-only normalization).
 """
+
 from __future__ import annotations
 
 import json
@@ -16,6 +25,13 @@ import numpy as np
 from host.hil.dsp_ref import DspChainRef
 from host.virtualbrain.kuramoto import KuramotoBrain, KuramotoConfig
 from host.virtualbrain.jansen_rit import JansenRitBrain, JansenRitConfig
+
+
+DATA_SOURCE = "synthetic_surrogate"
+DATA_SOURCE_NOTE = (
+    "Generated in host/replay/predictor_eval.py; NOT CHB-MIT, NOT clinical data. "
+    "Real EDF replay is Phase 2."
+)
 
 
 def compute_auroc(y_true: np.ndarray, y_score: np.ndarray) -> float:
@@ -30,8 +46,12 @@ def compute_auroc(y_true: np.ndarray, y_score: np.ndarray) -> float:
     return float(wins / (len(pos) * len(neg)))
 
 
-def compute_roc_curve(y_true: np.ndarray, y_score: np.ndarray, n_thresh: int = 100) -> Tuple[List[float], List[float]]:
-    thresholds = np.linspace(float(np.max(y_score)) + 1e-6, float(np.min(y_score)) - 1e-6, n_thresh)
+def compute_roc_curve(
+    y_true: np.ndarray, y_score: np.ndarray, n_thresh: int = 100
+) -> Tuple[List[float], List[float]]:
+    thresholds = np.linspace(
+        float(np.max(y_score)) + 1e-6, float(np.min(y_score)) - 1e-6, n_thresh
+    )
     fpr_list: List[float] = []
     tpr_list: List[float] = []
     pos_total = max(1, int(np.sum(y_true == 1)))
@@ -46,11 +66,12 @@ def compute_roc_curve(y_true: np.ndarray, y_score: np.ndarray, n_thresh: int = 1
 
 
 def evaluate_gate_g5_detector(n_windows: int = 400, seed: int = 2026) -> Dict[str, Any]:
-    """Gate G5: Compare Int8 LIF SNN detector against Raw Amplitude and Envelope Z-Score baselines.
+    """Gate G5 (SYNTHETIC SURROGATE): Int8 LIF detector vs amplitude / envelope-z baselines.
 
-    Simulates non-stationary background noise + electrode drift + beta bursts so simple raw
-    amplitude thresholding struggles (~0.78 AUROC) while the temporal leaky integration of
-    quadrature envelope + phase coherence in the Int8 LIF SNN achieves >= 0.92 AUROC.
+    Simulates non-stationary background noise + electrode drift + beta bursts so
+    simple raw-amplitude thresholding struggles while the temporal leaky
+    integration of the quadrature envelope + phase coherence scores higher.
+    This is a synthetic sanity check, not a clinical-data result.
     """
     rng = np.random.default_rng(seed)
     y_true = np.zeros(n_windows, dtype=np.int32)
@@ -76,15 +97,21 @@ def evaluate_gate_g5_detector(n_windows: int = 400, seed: int = 2026) -> Dict[st
         glitch = np.zeros(n_samp)
         if is_burst == 0 and rng.random() < 0.40:
             g_idx = rng.integers(65, n_samp - 20)
-            glitch[g_idx : g_idx + 7] = rng.uniform(1350.0, 2200.0) * np.sin(2.0 * np.pi * 20.5 * np.arange(7) / fs)
+            glitch[g_idx : g_idx + 7] = rng.uniform(1350.0, 2200.0) * np.sin(
+                2.0 * np.pi * 20.5 * np.arange(7) / fs
+            )
 
         # Sustained 20 Hz beta burst in positive windows
         burst_sig = np.zeros(n_samp)
         if is_burst == 1:
             b_amp = rng.uniform(720.0, 1480.0)
-            burst_sig = b_amp * np.cos(2.0 * np.pi * rng.uniform(18.5, 22.0) * t + rng.uniform(0, 2 * np.pi))
+            burst_sig = b_amp * np.cos(
+                2.0 * np.pi * rng.uniform(18.5, 22.0) * t + rng.uniform(0, 2 * np.pi)
+            )
 
-        x = np.clip(np.round(wander + noise + glitch + burst_sig), -32768, 32767).astype(np.int16)
+        x = np.clip(
+            np.round(wander + noise + glitch + burst_sig), -32768, 32767
+        ).astype(np.int16)
 
         # 1. Baseline A: Raw peak amplitude threshold
         score_amp[w] = float(np.percentile(np.abs(x), 95))
@@ -106,15 +133,17 @@ def evaluate_gate_g5_detector(n_windows: int = 400, seed: int = 2026) -> Dict[st
         # 3. Int8 LIF SNN (leaky integration beta=230/256 with inhibitory bias + phase-progression gate)
         v_mem = 0.0
         beta = 230.0 / 256.0  # Exact Q8 leak from nl_snn.c
-        bias = -465.0         # Inhibitory resting bias keeping resting spike rate < 5%
-        theta = 2600.0        # Firing threshold
+        bias = -465.0  # Inhibitory resting bias keeping resting spike rate < 5%
+        theta = 2600.0  # Firing threshold
         spikes = 0
         total_steps = len(env_arr)
         for idx_s in range(total_steps):
             e_val = env_arr[idx_s]
             # Phase velocity coherence bonus when instantaneous phase advances near 20 Hz (+655 Q15/sample)
             if idx_s > 0:
-                dphi = (phase_arr[idx_s] - phase_arr[idx_s - 1] + 32768.0) % 65536.0 - 32768.0
+                dphi = (
+                    phase_arr[idx_s] - phase_arr[idx_s - 1] + 32768.0
+                ) % 65536.0 - 32768.0
                 coh_gate = 1.25 if 250.0 <= dphi <= 1100.0 else 0.45
             else:
                 coh_gate = 1.0
@@ -132,6 +161,8 @@ def evaluate_gate_g5_detector(n_windows: int = 400, seed: int = 2026) -> Dict[st
     mean_resting_active_pct = float(np.mean(active_spike_fractions) * 100.0)
 
     return {
+        "data_source": DATA_SOURCE,
+        "data_source_note": DATA_SOURCE_NOTE,
         "n_windows": n_windows,
         "auroc_amplitude_baseline": auroc_amp,
         "auroc_envelope_z_baseline": auroc_env,
@@ -142,24 +173,30 @@ def evaluate_gate_g5_detector(n_windows: int = 400, seed: int = 2026) -> Dict[st
 
 
 def evaluate_gate_g6_predictor(seed: int = 2026) -> Dict[str, Any]:
-    """Gate G6: Patient-wise pre-ictal predictor evaluation across 4 held-out test patients (chb20..chb23).
+    """Gate G6 (SYNTHETIC SURROGATE): pre-ictal predictor on 4 pseudo-patients.
 
-    Enforces:
-    - Disjoint patient split: Train = chb01..chb16, Val = chb17..chb19, Test = chb20..chb23
-    - Strict 5 s safety gap before seizure onset: Pre-ictal = [onset - 60 s, onset - 5 s]
-    - Train-only normalization statistics
-    - Per-patient reporting (never pooled only), persistence baseline, median lead time (s), and FA/hour
-      with 30 s refractory window.
+    Enforces the three leakage guards on synthetic data:
+    - Disjoint pseudo-patient split: 16 train, 3 validation, 4 test (chb20..23 labels)
+    - Strict 5 s safety gap: pre-ictal = [onset - 60 s, onset - 5 s]
+    - Train-only normalization; validation-only alarm calibration
+
+    The classifier is an int8 linear readout followed by a causal exponential
+    kernel. It is a compact stand-in for the planned 1D CNN, not a convolutional
+    network. No EDF file is read here. See DATA_SOURCE_NOTE.
     """
     rng = np.random.default_rng(seed)
 
     # Generate 8-channel spectral/temporal feature trajectories for Train (16 patients) and Test (4 patients: chb20..chb23)
     # Using our biophysical Jansen-Rit / Kuramoto gradual pre-ictal ramp (t in [onset-60s, onset-5s])
-    def simulate_patient_recording(pat_id: int, n_seizures: int = 5, hours: float = 2.0) -> Dict[str, Any]:
+    def simulate_patient_recording(
+        pat_id: int, n_seizures: int = 5, hours: float = 2.0
+    ) -> Dict[str, Any]:
         p_rng = np.random.default_rng(seed + pat_id * 101)
         # 1 Hz cadence (1 window per second)
         n_sec = int(hours * 3600)
-        labels = np.zeros(n_sec, dtype=np.int32)  # 0=interictal, 1=pre-ictal, -1=excluded (ictal/post-ictal/5s gap)
+        labels = np.zeros(
+            n_sec, dtype=np.int32
+        )  # 0=interictal, 1=pre-ictal, -1=excluded (ictal/post-ictal/5s gap)
         onsets = np.linspace(900, n_sec - 600, n_seizures, dtype=np.int32)
 
         # 8-channel feature tensor: [n_sec, 8] representing beta/gamma band power + spatial synchrony
@@ -176,7 +213,9 @@ def evaluate_gate_g6_predictor(seed: int = 2026) -> Dict[str, Any]:
             ramp_len = pre_end - pre_start
             ramp = np.linspace(0.4, 2.1, ramp_len)[:, None]
             focal_mask = np.array([1.2, 1.4, 1.1, 0.6, 0.9, 1.3, 1.0, 0.5])[None, :]
-            feats[pre_start:pre_end] += ramp * focal_mask + p_rng.normal(0.0, 0.45, size=(ramp_len, 8))
+            feats[pre_start:pre_end] += ramp * focal_mask + p_rng.normal(
+                0.0, 0.45, size=(ramp_len, 8)
+            )
 
             # Exclude [onset - 5, onset + 90] (5s gap + ictal + post-ictal) from training/testing per spec
             excl_end = min(n_sec, onset + 90)
@@ -190,9 +229,17 @@ def evaluate_gate_g6_predictor(seed: int = 2026) -> Dict[str, Any]:
             "hours": hours,
         }
 
-    train_records = [simulate_patient_recording(pid, n_seizures=4, hours=1.5) for pid in range(1, 17)]
-    val_records = [simulate_patient_recording(pid, n_seizures=4, hours=1.5) for pid in range(17, 20)]
-    test_records = [simulate_patient_recording(pid, n_seizures=5, hours=2.0) for pid in range(20, 24)]
+    train_records = [
+        simulate_patient_recording(pid, n_seizures=4, hours=1.5) for pid in range(1, 17)
+    ]
+    val_records = [
+        simulate_patient_recording(pid, n_seizures=4, hours=1.5)
+        for pid in range(17, 20)
+    ]
+    test_records = [
+        simulate_patient_recording(pid, n_seizures=5, hours=2.0)
+        for pid in range(20, 24)
+    ]
 
     # Verify disjoint patient sets (Leakage Guard #1)
     train_ids = {r["patient_id"] for r in train_records}
@@ -212,7 +259,9 @@ def evaluate_gate_g6_predictor(seed: int = 2026) -> Dict[str, Any]:
     pos_mean = np.mean(x_train_norm[y_train_all == 1], axis=0)
     neg_mean = np.mean(x_train_norm[y_train_all == 0], axis=0)
     w_float = pos_mean - neg_mean
-    w_int8 = np.clip(np.round(w_float / np.max(np.abs(w_float)) * 64.0), -127, 127).astype(np.int8)
+    w_int8 = np.clip(
+        np.round(w_float / np.max(np.abs(w_float)) * 64.0), -127, 127
+    ).astype(np.int8)
 
     # Causal 12-second exponential-decay temporal convolution kernel (zero future lookahead!)
     kernel = np.exp(-np.linspace(0.0, 1.8, 12))
@@ -223,15 +272,17 @@ def evaluate_gate_g6_predictor(seed: int = 2026) -> Dict[str, Any]:
         pat_base = np.mean(rec_item["feats"][:300], axis=0, keepdims=True)
         x_norm = np.clip((rec_item["feats"] - pat_base) / train_std, -5.0, 5.0)
         x_q = np.clip(np.round(x_norm * 24.0), -127, 127).astype(np.int8)
-        raw_logits = (x_q.astype(np.int32) @ w_int8.astype(np.int32)).astype(np.float64) / (64.0 * 12.0)
+        raw_logits = (x_q.astype(np.int32) @ w_int8.astype(np.int32)).astype(
+            np.float64
+        ) / (64.0 * 12.0)
         causal_scores = np.convolve(raw_logits, kernel, mode="full")[: len(raw_logits)]
         probs = 1.0 / (1.0 + np.exp(-causal_scores))
         return probs, raw_logits
 
     # Calibrate alarm threshold strictly on Validation Set (chb17..chb19) for <= 0.35 FA/hr (Leakage Guard #3)
-    val_interictal_probs = np.concatenate([
-        infer_patient_probs(vrec)[0][vrec["labels"] == 0] for vrec in val_records
-    ])
+    val_interictal_probs = np.concatenate(
+        [infer_patient_probs(vrec)[0][vrec["labels"] == 0] for vrec in val_records]
+    )
     alarm_thresh = float(np.percentile(val_interictal_probs, 99.985))
 
     per_patient_results: Dict[str, Any] = {}
@@ -297,12 +348,17 @@ def evaluate_gate_g6_predictor(seed: int = 2026) -> Dict[str, Any]:
         }
 
     return {
+        "data_source": DATA_SOURCE,
+        "data_source_note": DATA_SOURCE_NOTE,
+        "model_architecture": "int8 linear readout + causal exponential kernel (CNN surrogate)",
         "split_verified_disjoint": True,
         "pre_ictal_window_s": "[-60, -5] (strict 5s pre-onset leakage gap enforced)",
         "per_patient": per_patient_results,
         "summary": {
             "mean_test_auroc": float(np.mean(all_aurocs)),
-            "median_lead_time_s": float(np.median(all_lead_times)) if all_lead_times else 0.0,
+            "median_lead_time_s": float(np.median(all_lead_times))
+            if all_lead_times
+            else 0.0,
             "iqr_lead_time_s": [
                 float(np.percentile(all_lead_times, 25)) if all_lead_times else 0.0,
                 float(np.percentile(all_lead_times, 75)) if all_lead_times else 0.0,
