@@ -148,6 +148,99 @@ def render_neuro_graph_panel(env: int, phase_deg: float, spikes: int, budget: in
     return "\n".join(out)
 
 
+SUB_DIGITS = str.maketrans("0123456789+-=()aehijklmnoprstuvx", "₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₐₑₕᵢⱼₖₗₘₙₒₚᵣₛₜᵤᵥₓ")
+SUP_DIGITS = str.maketrans("0123456789+-=()in", "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁱⁿ")
+
+
+def clean_math_signs(text: str) -> str:
+    """Convert raw LaTeX or SymPy strings ($x_2 = 6 - \\sqrt{33}$) to clean mathematical signs.
+    Example:
+      '$x_2 = 6 - \\sqrt{33}$'  -> 'x₂ = 6 - √33'
+      '6 - sqrt(33)'           -> '6 - √33'
+      '\\frac{-b \\pm \\sqrt{\\Delta}}{2a}' -> '(-b ± √Δ) / 2a'
+    """
+    if not text:
+        return ""
+    s = str(text)
+
+    # 1. Clean SymPy Eq wrapper: Eq(left, right) -> left = right
+    s = re.sub(r"Eq\(([^,]+),\s*([^)]+)\)", r"\1 = \2", s)
+
+    # 2. Remove dollar math delimiters ($...$, $$...$$)
+    s = re.sub(r"\$+", "", s)
+
+    # 3. Fractions: \frac{a}{b} -> (a) / (b)
+    for _ in range(3):
+        s = re.sub(r"\\d?frac\{((?:[^{}]|\{[^{}]*\})*)\}\{((?:[^{}]|\{[^{}]*\})*)\}", r"(\1) / (\2)", s)
+
+    # 4. Square roots: \sqrt{33} -> √33, sqrt(33) -> √33
+    s = re.sub(r"\\sqrt\{([^}]+)\}", lambda m: f"√{m.group(1)}" if len(m.group(1)) <= 4 else f"√({m.group(1)})", s)
+    s = re.sub(r"\\sqrt\s*([0-9a-zA-Z]+)", r"√\1", s)
+    s = re.sub(r"\bsqrt\(([^)]+)\)", lambda m: f"√{m.group(1)}" if len(m.group(1)) <= 4 else f"√({m.group(1)})", s)
+    s = re.sub(r"\bsqrt\b", "√", s)
+
+    # 5. Subscripts: x_2 -> x₂, x_{12} -> x₁₂
+    def sub_repl(m):
+        base = m.group(1)
+        sub = m.group(2).translate(SUB_DIGITS)
+        return f"{base}{sub}"
+    s = re.sub(r"([a-zA-Z])_\{?([0-9]+)\}?", sub_repl, s)
+
+    # 6. Superscripts: x^2 -> x², x**2 -> x²
+    s = re.sub(r"\*\*2\b|\^2\b", "²", s)
+    s = re.sub(r"\*\*3\b|\^3\b", "³", s)
+    s = re.sub(r"\^\{(-?[0-9]+)\}", lambda m: m.group(1).translate(SUP_DIGITS), s)
+    s = re.sub(r"(\*\*|\^)(-?[0-9]+)\b", lambda m: m.group(2).translate(SUP_DIGITS), s)
+
+    # 7. Imaginary unit: *I -> i, I* -> i·, standalone I -> i
+    s = re.sub(r"([0-9\.\)])\s*\*\s*I\b", r"\1i", s)
+    s = re.sub(r"\bI\s*\*\s*", "i·", s)
+    s = re.sub(r"\bI\b", "i", s)
+
+    # 8. Multiplication sign: 12*x -> 12·x, 4*a*c -> 4·a·c
+    s = re.sub(r"(\d+)\s*\*\s*([a-zA-Z\(])", r"\1·\2", s)
+    s = re.sub(r"([a-zA-Z\)])\s*\*\s*([a-zA-Z0-9\(])", r"\1·\2", s)
+
+    # 9. Radical reordering: "√33 + 6" -> "6 + √33"
+    s = re.sub(r"^(√[0-9a-zA-Z]+)\s*\+\s*([0-9\.\-]+)$", r"\2 + \1", s)
+
+    # 10. Mathematical operators & Greek letters
+    repls = [
+        (r"\\pm\b", "±"),
+        (r"\\mp\b", "∓"),
+        (r"\\times\b", "×"),
+        (r"\\cdot\b", "·"),
+        (r"\\div\b", "÷"),
+        (r"\\approx\b", "≈"),
+        (r"\\leq?\b", "≤"),
+        (r"\\geq?\b", "≥"),
+        (r"\\neq?\b", "≠"),
+        (r"\\Delta\b", "Δ"),
+        (r"\\delta\b", "δ"),
+        (r"\\pi\b", "π"),
+        (r"\\theta\b", "θ"),
+        (r"\\phi\b", "φ"),
+        (r"\\alpha\b", "α"),
+        (r"\\beta\b", "β"),
+        (r"\\gamma\b", "γ"),
+        (r"\\omega\b", "ω"),
+        (r"\\lambda\b", "λ"),
+        (r"\\mu\b", "µ"),
+        (r"\\infty\b", "∞"),
+        (r"\\to\b|\\rightarrow\b", "➔"),
+        (r"\\left|\\right", ""),
+        (r"\\(mathbf|text|mathrm|boldsymbol)\{([^}]+)\}", r"\2"),
+    ]
+    for p, r in repls:
+        s = re.sub(p, r, s)
+
+    # 11. Clean unnecessary backslashes, redundant parens in division & whitespace
+    s = re.sub(r"\\([a-zA-Z]+)", r"\1", s)
+    s = re.sub(r"/\s*\(([0-9]+)\)", r"/ \1", s)
+    s = re.sub(r"[ \t]+", " ", s)
+    return s.strip()
+
+
 def natural_to_sympy_str(text: str) -> str:
     """Convert natural words ('sqrt of x', 'divided by', 'squared', etc.) to SymPy syntax."""
     s = text.strip()
@@ -340,8 +433,19 @@ def calculate_and_graph(query: str, domain: Optional[Tuple[float, float]] = None
                     out.append(f"  {C_GRAY}Quadratic Formula     :{C_RESET} {var_x} = (-b ± √Δ) / 2a")
 
                     roots = sp.solve(eq, var_x)
-                    r_strs = [f"{r} ({float(r.evalf()):.4f})" if getattr(r, 'is_real', False) else str(r) for r in roots]
-                    out.append(f"  {C_BOLD}{C_GREEN}▶ SOLUTIONS FOR {var_x}     :{C_RESET} {C_BOLD}{C_WHITE}{', '.join(r_strs)}{C_RESET}")
+                    formatted_roots: List[str] = []
+                    for idx, r in enumerate(roots, 1):
+                        sub = str(idx).translate(SUB_DIGITS)
+                        var_label = f"{var_x}{sub}" if len(roots) > 1 else str(var_x)
+                        clean_sym = clean_math_signs(str(r))
+                        clean_sym = re.sub(r"^(√[0-9a-zA-Z]+)\s*\+\s*([0-9\.\-]+)$", r"\2 + \1", clean_sym)
+                        try:
+                            fval = float(r.evalf())
+                            formatted_roots.append(f"{var_label} = {clean_sym} ({fval:.4f})")
+                        except Exception:
+                            formatted_roots.append(f"{var_label} = {clean_sym}")
+
+                    out.append(f"  {C_BOLD}{C_GREEN}▶ SOLUTIONS FOR {var_x}     :{C_RESET} {C_BOLD}{C_WHITE}{',  '.join(formatted_roots)}{C_RESET}")
 
                     h_v = -b_val / (2 * a_val)
                     k_v = c_val - (b_val**2) / (4 * a_val)
@@ -350,7 +454,7 @@ def calculate_and_graph(query: str, domain: Optional[Tuple[float, float]] = None
                     h_f = float(h_v.evalf())
                     xs = np.linspace(h_f - 6.0, h_f + 6.0, 300)
                     ys = f_lamb(xs)
-                    out.append(render_braille_curve(xs, [(ys, C_CYAN, f"y = {f_diff}")]))
+                    out.append(render_braille_curve(xs, [(ys, C_CYAN, f"y = {clean_math_signs(str(f_diff))}")]))
                     res = "\n".join(out)
                     from host.session_manager import record_calc_in_session
                     record_calc_in_session("Math", q_clean, res)
@@ -362,12 +466,27 @@ def calculate_and_graph(query: str, domain: Optional[Tuple[float, float]] = None
                 pass
 
             sol = sp.solve(eq, var_x)
-            out.append(f"{C_BOLD}{C_GREEN}⚡ EQUATION SOLVER:{C_RESET} {C_WHITE}{eq}{C_RESET}")
-            out.append(f"{C_AMBER}▶ SOLUTIONS FOR {var_x}:{C_RESET} {C_BOLD}{C_CYAN}{sol}{C_RESET}")
+            out.append(f"{C_BOLD}{C_GREEN}⚡ EQUATION SOLVER:{C_RESET} {C_WHITE}{clean_math_signs(f'{sym_left} = {sym_right}')}{C_RESET}")
+            if isinstance(sol, (list, tuple)):
+                formatted_sols: List[str] = []
+                for idx, s_elem in enumerate(sol, 1):
+                    sub = str(idx).translate(SUB_DIGITS)
+                    var_label = f"{var_x}{sub}" if len(sol) > 1 else str(var_x)
+                    c_elem = clean_math_signs(str(s_elem))
+                    c_elem = re.sub(r"^(√[0-9a-zA-Z]+)\s*\+\s*([0-9\.\-]+)$", r"\2 + \1", c_elem)
+                    try:
+                        fval = float(sp.sympify(s_elem).evalf())
+                        formatted_sols.append(f"{var_label} = {c_elem} ({fval:.4f})")
+                    except Exception:
+                        formatted_sols.append(f"{var_label} = {c_elem}")
+                sol_str = ",  ".join(formatted_sols)
+            else:
+                sol_str = clean_math_signs(str(sol))
+            out.append(f"{C_AMBER}▶ SOLUTIONS FOR {var_x}:{C_RESET} {C_BOLD}{C_CYAN}{sol_str}{C_RESET}")
 
             xs = np.linspace(-10.0, 10.0, 300)
             ys = f_lamb(xs)
-            out.append(render_braille_curve(xs, [(ys, C_CYAN, f"{f_diff} = 0")]))
+            out.append(render_braille_curve(xs, [(ys, C_CYAN, f"{clean_math_signs(str(f_diff))} = 0")]))
             res = "\n".join(out)
             from host.session_manager import record_calc_in_session
             record_calc_in_session("Math", q_clean, res)
@@ -387,8 +506,8 @@ def calculate_and_graph(query: str, domain: Optional[Tuple[float, float]] = None
         d_expr = sp.diff(sym_expr, x)
 
         out.append(f"{C_BOLD}{C_GREEN}⚡ CALCULUS // DERIVATIVE:{C_RESET}")
-        out.append(f"  {C_GRAY}f(x)  ={C_RESET} {C_WHITE}{sym_expr}{C_RESET}")
-        out.append(f"  {C_AMBER}f'(x) ={C_RESET} {C_BOLD}{C_CYAN}{d_expr}{C_RESET}")
+        out.append(f"  {C_GRAY}f(x)  ={C_RESET} {C_WHITE}{clean_math_signs(str(sym_expr))}{C_RESET}")
+        out.append(f"  {C_AMBER}f'(x) ={C_RESET} {C_BOLD}{C_CYAN}{clean_math_signs(str(d_expr))}{C_RESET}")
 
         xs = np.linspace(-6.0, 6.0, 300)
         f_l = sp.lambdify(x, sym_expr, modules=["numpy"])
@@ -409,17 +528,17 @@ def calculate_and_graph(query: str, domain: Optional[Tuple[float, float]] = None
             a_val, b_val = float(m_bounds.group(1)), float(m_bounds.group(2))
             exact_val = sp.integrate(sym_expr, (x, a_val, b_val))
             out.append(f"{C_BOLD}{C_GREEN}⚡ DEFINITE INTEGRAL [a={a_val}, b={b_val}]:{C_RESET}")
-            out.append(f"  {C_GRAY}∫ f(x) dx ={C_RESET} {C_BOLD}{C_CYAN}{exact_val}{C_RESET}  ({float(exact_val):.6f})")
+            out.append(f"  {C_GRAY}∫ f(x) dx ={C_RESET} {C_BOLD}{C_CYAN}{clean_math_signs(str(exact_val))}{C_RESET}  ({float(exact_val):.6f})")
             xs = np.linspace(min(a_val, -5.0), max(b_val, 5.0), 300)
         else:
             indef_val = sp.integrate(sym_expr, x)
             out.append(f"{C_BOLD}{C_GREEN}⚡ INDEFINITE INTEGRAL:{C_RESET}")
-            out.append(f"  {C_GRAY}∫ f(x) dx ={C_RESET} {C_BOLD}{C_CYAN}{indef_val} + C{C_RESET}")
+            out.append(f"  {C_GRAY}∫ f(x) dx ={C_RESET} {C_BOLD}{C_CYAN}{clean_math_signs(str(indef_val))} + C{C_RESET}")
             xs = np.linspace(-6.0, 6.0, 300)
 
         f_l = sp.lambdify(x, sym_expr, modules=["numpy"])
         ys = np.array(f_l(xs), dtype=np.float64)
-        out.append(render_braille_curve(xs, [(ys, C_CYAN, f"f(x) = {sym_expr}")]))
+        out.append(render_braille_curve(xs, [(ys, C_CYAN, f"f(x) = {clean_math_signs(str(sym_expr))}")]))
         return "\n".join(out)
 
     # 4. Multi-Function Plotting: "sin(x), cos(x)"
@@ -434,8 +553,8 @@ def calculate_and_graph(query: str, domain: Optional[Tuple[float, float]] = None
             s_expr = sp.sympify(natural_to_sympy_str(part))
             fn = sp.lambdify(x, s_expr, modules=["numpy"])
             y_vals = np.array(fn(xs), dtype=np.float64)
-            curves.append((y_vals, colors[idx % len(colors)], str(s_expr)))
-            out.append(f"  {colors[idx % len(colors)]}Curve {idx+1}:{C_RESET} {s_expr}")
+            curves.append((y_vals, colors[idx % len(colors)], clean_math_signs(str(s_expr))))
+            out.append(f"  {colors[idx % len(colors)]}Curve {idx+1}:{C_RESET} {clean_math_signs(str(s_expr))}")
 
         out.append(render_braille_curve(xs, curves))
         return "\n".join(out)
@@ -451,16 +570,16 @@ def calculate_and_graph(query: str, domain: Optional[Tuple[float, float]] = None
         d_expr = sp.diff(sym_expr, x)
         integ_expr = sp.integrate(sym_expr, x)
 
-        out.append(f"{C_BOLD}{C_GREEN}⚡ FUNCTION CALCULATOR:{C_RESET} {C_WHITE}f(x) = {sym_expr}{C_RESET}")
-        out.append(f"  {C_GRAY}Derivative f'(x)     :{C_RESET} {C_CYAN}{d_expr}{C_RESET}")
-        out.append(f"  {C_GRAY}Integral   ∫ f(x) dx :{C_RESET} {C_PURPLE}{integ_expr} + C{C_RESET}")
+        out.append(f"{C_BOLD}{C_GREEN}⚡ FUNCTION CALCULATOR:{C_RESET} {C_WHITE}f(x) = {clean_math_signs(str(sym_expr))}{C_RESET}")
+        out.append(f"  {C_GRAY}Derivative f'(x)     :{C_RESET} {C_CYAN}{clean_math_signs(str(d_expr))}{C_RESET}")
+        out.append(f"  {C_GRAY}Integral   ∫ f(x) dx :{C_RESET} {C_PURPLE}{clean_math_signs(str(integ_expr))} + C{C_RESET}")
 
         # Find roots f(x) = 0
         try:
             roots = sp.solve(sym_expr, x)
             real_roots = [r for r in roots if sp.re(r) == r or r.is_real]
             if real_roots:
-                r_str = ", ".join(f"{float(r):.4f}" for r in real_roots[:4])
+                r_str = ", ".join(clean_math_signs(f"{float(r):.4f}") for r in real_roots[:4])
                 out.append(f"  {C_GRAY}Roots (f=0)      :{C_RESET} {C_AMBER}{r_str}{C_RESET}")
         except Exception:
             pass
@@ -475,12 +594,12 @@ def calculate_and_graph(query: str, domain: Optional[Tuple[float, float]] = None
         ys_f = np.array(f_l(xs), dtype=np.float64)
         ys_d = np.array(d_l(xs), dtype=np.float64)
 
-        out.append(render_braille_curve(xs, [(ys_f, C_CYAN, f"f(x) = {sym_expr}"), (ys_d, C_AMBER, "f'(x)")], cols=56, rows=8))
+        out.append(render_braille_curve(xs, [(ys_f, C_CYAN, f"f(x) = {clean_math_signs(str(sym_expr))}"), (ys_d, C_AMBER, "f'(x)")], cols=56, rows=8))
     else:
         # Pure Numerical / Symbolic Scalar calculation!
         val_eval = sym_expr.evalf()
-        out.append(f"{C_BOLD}{C_GREEN}⚡ SCIENTIFIC CALCULATION:{C_RESET} {C_WHITE}{q_clean}{C_RESET}")
-        out.append(f"  {C_GRAY}Symbolic Form :{C_RESET} {C_CYAN}{sym_expr}{C_RESET}")
+        out.append(f"{C_BOLD}{C_GREEN}⚡ SCIENTIFIC CALCULATION:{C_RESET} {C_WHITE}{clean_math_signs(q_clean)}{C_RESET}")
+        out.append(f"  {C_GRAY}Symbolic Form :{C_RESET} {C_CYAN}{clean_math_signs(str(sym_expr))}{C_RESET}")
         out.append(f"  {C_BOLD}{C_GREEN}Exact Decimal :{C_RESET} {C_WHITE}{float(val_eval):+16.10f}{C_RESET}")
         out.append(f"  {C_GRAY}Scientific    :{C_RESET} {C_AMBER}{float(val_eval):.8e}{C_RESET}")
 

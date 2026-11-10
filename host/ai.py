@@ -12,7 +12,10 @@ import json
 from typing import Optional, List, Dict, Any
 import requests
 
-from host.calc import C_RESET, C_BOLD, C_CYAN, C_GREEN, C_AMBER, C_RED, C_GRAY, C_WHITE, C_PURPLE
+from host.calc import (
+    C_RESET, C_BOLD, C_CYAN, C_GREEN, C_AMBER, C_RED, C_GRAY, C_WHITE, C_PURPLE,
+    clean_math_signs,
+)
 
 GEMINI_MODELS = [
     "gemini-3.5-flash-lite",
@@ -40,7 +43,10 @@ def query_gemini(prompt: str, system_instruction: Optional[str] = None) -> str:
         system_instruction
         or "You are nuro-AI, an expert STEM tutor and engineer. "
         "Answer with extreme mathematical and scientific precision. "
-        "Be concise and point-wise (minimum verbose). Use clean Unicode math symbols (², ³, √, ±, π, Δ, →). "
+        "Be concise and point-wise (minimum verbose). "
+        "STRICT REQUIREMENT: NEVER output LaTeX math syntax or dollar delimiters. "
+        "Never output strings like '$x_2 = 6 - \\sqrt{33}$', '\\frac{a}{b}', or '\\pm'. "
+        "Always use plain Unicode mathematical signs: x₂ = 6 - √33, (a)/(b), ±, ², ³, ·, ≈, Δ, π, →. "
         "Provide step-by-step derivations for algebra, calculus, physics, and chemistry questions."
     )
 
@@ -72,10 +78,11 @@ def query_gemini(prompt: str, system_instruction: Optional[str] = None) -> str:
                 if candidates:
                     parts = candidates[0].get("content", {}).get("parts", [])
                     if parts:
-                        text = parts[0].get("text", "").strip()
+                        raw_ai_text = parts[0].get("text", "").strip()
+                        cleaned_ai_text = clean_math_signs(raw_ai_text)
                         out = [
                             f"{C_BOLD}{C_GREEN}🧠 nuro-AI ({model}):{C_RESET}",
-                            f"{C_WHITE}{text}{C_RESET}",
+                            f"{C_WHITE}{cleaned_ai_text}{C_RESET}",
                         ]
                         return "\n".join(out)
             else:
