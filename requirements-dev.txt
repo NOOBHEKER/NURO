@@ -1,0 +1,5 @@
+-r requirements.txt
+
+# Test, lint and firmware-build tooling.
+pytest>=8.0
+platformio>=6.1

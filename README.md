@@ -1,40 +1,222 @@
-> **ETHICS & SCOPE DISCLOSURE — READ FIRST:** **This is a simulation testbed.** No human or animal tissue is recorded, stimulated, or involved at any stage. No electrodes are used. The "brain" is a numerical model on a laptop; the "stimulation" is a 3.3 V logic pulse sent back to that laptop over USB. Public, de-identified datasets are used offline for model development only. Nothing here is a medical device, a therapy, or a clinical claim.
+> **ETHICS & SCOPE — READ FIRST.** This is a **simulation testbed**. No human or animal tissue is recorded, stimulated, or involved at any stage. No electrodes are used. The "brain" is a numerical model on a laptop; the "stimulation" is a 3.3 V logic pulse on a single GPIO sent back to that laptop over USB. Public, de-identified datasets are used offline for model development only. Nothing here is a medical device, a therapy, or a clinical claim.
 
-# Neural Loop: Closed-Loop Edge Neuromodulation Testbed on ESP32-S3
+# Neural Loop — a closed-loop edge neuromodulation testbed on ESP32-S3
 
-**One-line pitch:** *A single ESP32-S3-WROOM-1-N16R8 runs a nested two-loop adaptive neuromodulation testbed—predicting pre-ictal transitions seconds in advance (int8 1D-CNN) to arm a sub-5 ms fast loop (61-tap quadrature FIR + 64-neuron int8 LIF Spiking Neural Network + 20 ms artifact blanking) that phase-locks pulses to an empirically identified Phase-Response Curve (PRC).*
+**One-line pitch:** a single ESP32-S3-WROOM-1-N16R8 runs a two-timescale neuromodulation testbed — an offline pre-ictal predictor proposes when to arm, and a 1 kHz on-device loop (61-tap Q15 quadrature FIR + 64-neuron int8 LIF SNN + 20 ms artifact blanking) phase-locks a 10 µs marker pulse to an empirically identified phase-response curve.
+
+The project is also a self-contained scientific calculator (math, chemistry, physics) with an Obsidian graph sync. The calculator is real and tested; the neural-loop claims are labelled below.
 
 ---
 
-## Verified Hardware Target (Probed in Week 0)
+## What is real, what is simulated
 
-| Property | Verified Hardware Value |
+This table is the short version. The full evidence ledger is [`docs/CLAIMS.md`](docs/CLAIMS.md).
+
+| Claim | Status |
 |---|---|
-| **MCU** | `ESP32-S3 (QFN56) rev v0.2` (Dual-Core Xtensa LX7 @ 240 MHz + 128-bit SIMD) |
-| **Module Variant** | `ESP32-S3-WROOM-1-N16R8` (`MAC: 84:c7:bb:58:23:ec`) |
-| **Flash** | `16 MB Quad SPI (3.3V)` (`Manuf 0x68, Dev 0x4018`) |
-| **PSRAM** | `8 MB Octal Embedded PSRAM (AP_3v3)` |
-| **Host Interface** | `WCH CH343` High-Speed USB-UART (`COM6`, up to 6 Mbps) + Native USB-OTG (`GPIO19/20`) |
+| ESP32-S3-WROOM-1-N16R8, 16 MB flash, 8 MB octal PSRAM, MAC `84:c7:bb:58:23:ec` | ✅ **Verified** by a read-only esptool probe |
+| 32-byte frames + CRC16-CCITT-FALSE, 2 Mbps UART | ✅ **Verified** by tests and live HIL runs |
+| 61-tap Q15 quadrature FIR, phase, 20 ms blanking | ✅ **Verified** in-silico; **implemented** on-device |
+| 64-neuron int8 LIF SNN | ⚠️ **Implemented**, but **weights are formula-initialised, not trained** |
+| Host↔board RTT p50 ≈ 1.26 ms, p99 ≈ 1.64 ms (500 frames) | ✅ **Verified** on the pre-rebuild firmware |
+| G7 phase-locked vs random-phase sham (Kuramoto) | ✅ **Verified** in simulation |
+| G8 empirical PRC + bootstrap CIs | ✅ **Verified** in simulation |
+| G5 detector AUROC 0.9998 / G6 predictor AUROC 0.990, 53 s lead | 🧪 **Synthetic surrogate — NOT CHB-MIT** |
+| "1D-CNN" pre-ictal predictor | 🚧 **Planned**; current model is an int8 linear readout + exponential kernel |
+| CHB-MIT EDF ingestion / 23-patient split | 🚧 **Planned** (Phase 2) |
+| FreeRTOS task decomposition / custom USB transport | 🚧 **Planned**; current firmware is one Arduino `loop()` |
+| Task watchdog, explicit `arm` gate, 10 µs pulse | 🛠️ **Implemented and built**, not yet flashed/scope-verified |
+
+> **Do not cite the G5/G6 numbers as clinical or CHB-MIT results.** They come from signals generated inside this repository. The real-data pipeline is the next milestone.
 
 ---
 
-## Repository Layout
+## Hardware (probed, not assumed)
+
+| Property | Value |
+|---|---|
+| Module | `ESP32-S3-WROOM-1-N16R8` |
+| MCU | ESP32-S3 (QFN56) rev v0.2, dual-core LX7 @ 240 MHz |
+| Flash | 16 MB quad SPI (`manuf 0x68`, `device 0x4018`) |
+| PSRAM | 8 MB octal, 3.3 V |
+| DevKit | ESP32-S3-DevKitC-1 v1.3 |
+| Host link | WCH CH343 USB-UART on `COM6`, 2 Mbps |
+| Native USB | GPIO19/20 (second USB-C port) |
+| MAC | `84:c7:bb:58:23:ec` |
+
+The stock PlatformIO `esp32-s3-devkitc-1` board is the **N8 / no-PSRAM** variant. This repo ships `firmware/boards/esp32s3_n16r8.json` so the build log names the real module and enables `qio_opi` + the 16 MB partition table.
+
+---
+
+## Quick start
+
+```powershell
+cd "G:\MIT Planner\mit\neural-loop"
+
+# One-time environment
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+
+# Showcase: web cockpit + TUI + matplotlib GUI
+.\.venv\Scripts\python.exe -m host.cli demo
+
+# Or use the launcher from any directory (if C:\Users\Administrator\bin is on PATH)
+nuro demo
+```
+
+`nuro demo` starts three views:
+
+1. **Web cockpit** — live localhost workstation, owns the ESP32-S3 serial port.
+2. **Terminal TUI** — animated 8-pane cockpit in the current terminal.
+3. **Matplotlib GUI** — interactive 4-panel window.
+
+Windows serial ports are exclusive, so the TUI and GUI deliberately run as **labelled in-silico mirrors** while the web cockpit owns the board. Press `q` in the TUI to stop all three cleanly.
+
+### Useful commands
+
+| Command | What it does |
+|---|---|
+| `nuro demo` | All three views in one command |
+| `nuro tui` | Terminal cockpit (live board if free) |
+| `nuro web` | Localhost cockpit + browser |
+| `nuro gui` | Matplotlib cockpit |
+| `nuro info` | **Real** read-only board probe (chip, MAC, flash, PSRAM) |
+| `nuro doctor` | Environment, dependencies, board and repo readiness |
+| `nuro bench --frames 500` | Live HIL benchmark; writes `runs/<id>/metrics.json` |
+| `nuro eval` | Gates G5/G6 on **synthetic surrogates** |
+| `nuro test` | Full pytest suite |
+| `nuro figures` | Regenerate publication figures (PNG + PDF) |
+| `nuro calc "x^3 - 3*x"` | Scientific calculator / calculus / graph |
+| `nuro chem "KMnO4 + HCl -> KCl + MnCl2 + H2O + Cl2"` | Chemistry balancer |
+| `nuro phy "projectile v=50 angle=45"` | Physics engine |
+| `nuro session switch Physics` | Named calculation sessions |
+| `nuro obsidian` | Sync and open the Obsidian graph |
+
+Port selection is centralised in `host/board.py`:
+
+```
+--port  >  NURO_PORT  >  auto-detected CH343/ESP32-S3  >  COM6 fallback
+```
+
+---
+
+## Architecture
 
 ```text
 neural-loop/
-├── firmware/                  # ESP-IDF C/C++ project
-│   ├── main/                  # FreeRTOS tasks, watchdog, USB transport
-│   └── components/
-│       ├── link/              # 32-byte wire protocol & CRC16-CCITT-FALSE
-│       ├── dsp/               # Q15 quadrature FIR, CORDIC/LUT phase, 20ms artifact blanking
-│       └── snn/               # 64-neuron int8 Leaky Integrate-and-Fire (LIF) kernel
+├── firmware/                     ESP32-S3 Arduino/PlatformIO project
+│   ├── boards/                   N16R8 board manifest (16 MB, qio_opi)
+│   ├── components/
+│   │   ├── link/                 32-byte wire protocol + CRC16-CCITT-FALSE
+│   │   ├── dsp/                  61-tap Q15 quadrature FIR, phase, blanking
+│   │   └── snn/                  64-neuron int8 LIF kernel
+│   └── src/main.cpp              1 kHz loop, arm gate, watchdog, boot self-test
 ├── host/
-│   ├── hil/                   # Protocol codec, Windows timeBeginPeriod(1), transport
-│   ├── virtualbrain/          # Stage 1 Kuramoto + Stage 2 Jansen-Rit NMM + artifact model
-│   ├── replay/                # CHB-MIT 8-channel bipolar montage pipeline
-│   └── analysis/              # PRC identification, 5-arm bake-off, bootstrap CI
+│   ├── board.py                  port policy + read-only identity probe
+│   ├── cli.py                    `nuro` command surface
+│   ├── demo.py                   three-view orchestrator
+│   ├── doctor.py                 environment/board readiness
+│   ├── hil/                      protocol codec, DSP reference, HIL transport
+│   ├── virtualbrain/             Kuramoto + Jansen-Rit neural mass models
+│   ├── replay/                   synthetic G5/G6 surrogates (CHB-MIT planned)
+│   ├── analysis/                 PRC identification, 5-arm bakeoff, figures
+│   ├── dash/                     TUI, web cockpit, matplotlib GUI
+│   ├── calc.py / chem.py / phy.py scientific calculator engines
+│   └── obsidian_sync.py          vault + graph sync
 ├── tests/
-│   ├── golden/                # Committed byte-exact parity fixtures (CRC16, frames, hashes)
-│   └── test_suite.py          # Automated verification of Gates G1, G3, G4
-└── experiments/               # Pre-registered experiment configs
+│   ├── golden/                   committed byte-exact fixtures (read-only)
+│   └── test_suite.py             hermetic verification suite
+├── tools/                        verified full-flash backup / restore
+├── docs/                         CLAIMS.md, RECOVERY.md, figures
+├── backups/                      git-ignored full-flash images + manifest
+└── runs/                         HIL metrics (metrics.json tracked)
 ```
+
+### The two loops
+
+- **Fast loop (on-device, 1 kHz):** sample frame → Q15 quadrature FIR → envelope/phase → int8 LIF SNN → phase-gated pulse on GPIO4 → 20 ms blanking.
+- **Slow loop (host, offline):** Kuramoto/Jansen-Rit simulation → empirical PRC → 5-arm bakeoff → synthetic G5/G6 surrogate evaluation → arming hint.
+
+The current predictor is **not** a 1D CNN and is **not** trained on CHB-MIT. See [`docs/CLAIMS.md`](docs/CLAIMS.md).
+
+---
+
+## Gates
+
+| Gate | Meaning | Status |
+|---|---|---|
+| G0 | 32-byte frame + CRC16 contract | ✅ tests |
+| G3 | DSP quadrature phase + 20 ms blanking | ✅ tests |
+| G4 | Twin-run determinism (Kuramoto + Jansen-Rit) | ✅ tests |
+| G5 | Int8 LIF detector vs baselines | 🧪 synthetic surrogate |
+| G6 | Pre-ictal predictor, leakage guards | 🧪 synthetic surrogate |
+| G7 | Phase-locked beats sham and no-stim | ✅ simulation |
+| G8 | Empirical PRC + bootstrap CIs | ✅ simulation |
+| G10 | Reproducible figures + dashboard | ✅ tests (to `tmp_path`) |
+
+---
+
+## Safety contract
+
+The board is a single point of failure, so the safety rules are not negotiable:
+
+- Only **GPIO 4** is driven as a stimulation marker; 3.3 V logic, 10 µs pulse, into the laptop's USB input or a jumper. **Never to a body.**
+- Never drive strapping pins **GPIO 0/3/45/46**, flash/PSRAM pins **GPIO 26–37**, native USB **19/20**, or UART0 **43/44**.
+- Boot is **disarmed**. GPIO4 can only pulse after an explicit `arm` command.
+- A task watchdog resets a hung loop instead of leaving GPIO4 in an unknown state.
+- **Never** use `erase-flash` "to fix it". Restore the verified image instead.
+
+### Recovery
+
+A full 16 MB flash image was read, SHA-256 hashed, and verified byte-for-byte before any firmware change:
+
+```text
+backups/20261110_203223/flash.bin   (16,777,216 bytes)
+SHA-256 9f4f013c0cf6ba851f15bab9ff956a9a4be047484fc8d4c527304f73eedc3bed
+```
+
+Restore:
+
+```powershell
+python tools\board_restore.py --backup "backups\20261110_203223" --confirm RESTORE
+```
+
+The restore tool checks the confirm token, SHA-256 and board MAC, backs up the current flash first, and verifies the write. Full procedure: [`docs/RECOVERY.md`](docs/RECOVERY.md).
+
+---
+
+## Testing
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests -q
+```
+
+The suite is **hermetic**:
+
+- goldens are read and compared, never rewritten;
+- figures and the dashboard are written to pytest's `tmp_path`;
+- Obsidian is never launched and the user's vault/session state is never touched;
+- PDF metadata is deterministic.
+
+Current result: **14 passed**.
+
+---
+
+## Roadmap
+
+1. **P0 (done):** verified backup/restore, N16R8 build, truth labels, hermetic tests, real `nuro info`, central port policy.
+2. **P1 (next):** flash the safety firmware with user approval, re-measure HIL latency, scope the 10 µs pulse, add CI.
+3. **P2:** download the real CHB-MIT 23-patient set, parse EDF, implement a genuine patient-wise split and a 1D CNN; re-run G5/G6 and replace every synthetic label with measured values.
+4. **P3:** portfolio polish — README figures, demo video, MIT license, vault rewrite.
+
+---
+
+## License
+
+MIT. See [`LICENSE`](LICENSE).
+
+## Links
+
+- [`docs/CLAIMS.md`](docs/CLAIMS.md) — evidence ledger and forbidden sentences
+- [`docs/RECOVERY.md`](docs/RECOVERY.md) — board safety and unbrick procedure
+- [`AGENTS.md`](AGENTS.md) — guardrails for future contributors/agents

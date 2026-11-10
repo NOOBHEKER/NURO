@@ -1,0 +1,8 @@
+# Runtime dependencies for the host-side testbed and calculator.
+# Python 3.10+ (tested on 3.14).
+numpy>=1.26
+matplotlib>=3.8
+pyserial>=3.5
+sympy>=1.12
+requests>=2.31
+esptool>=5.0
