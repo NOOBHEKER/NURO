@@ -156,13 +156,21 @@ def natural_to_sympy_str(text: str) -> str:
 
 def calculate_and_graph(query: str, domain: Optional[Tuple[float, float]] = None) -> str:
     """Primary Scientific Graphing Calculator engine."""
-    q_clean = query.strip()
-    if not q_clean:
+    q_raw = query.strip()
+    if not q_raw:
         return ""
 
-    if q_clean.lower() in ("obsidian", "graph", "vault", "sync"):
-        from host.obsidian_sync import open_obsidian_graph_view
-        return open_obsidian_graph_view()
+    from host.obsidian_sync import extract_obsidian_directive, record_session_calculation, launch_obsidian_vault
+    q_clean, target_vault = extract_obsidian_directive(q_raw)
+    q_clean_low = q_clean.lower()
+
+    # Session switching inside calc
+    if q_clean_low.startswith("session"):
+        from host.cli import handle_session_command
+        return handle_session_command(q_clean.split()[1:])
+
+    if q_clean_low in ("obsidian", "graph", "vault", "sync"):
+        return launch_obsidian_vault(target_vault)
 
     out: List[str] = []
     x = sp.Symbol("x")
@@ -299,18 +307,25 @@ def calculate_and_graph(query: str, domain: Optional[Tuple[float, float]] = None
         out.append(render_braille_curve(xs, [(xs, C_CYAN, f"value={c_val:.4f}")], cols=48, rows=4))
 
     result_str = "\n".join(out)
-    try:
-        from host.obsidian_sync import record_session_calculation
-        record_session_calculation(
+
+    # Record in active session history
+    from host.session_manager import record_calc_in_session, get_active_session
+    record_calc_in_session("Math", q_clean, result_str)
+    active_sess = get_active_session()
+
+    # ONLY write to Obsidian if explicitly requested with vault name!
+    if target_vault:
+        note_p = record_session_calculation(
             domain="Math",
             title=f"Math - {q_clean[:30]}",
             query=q_clean,
             result_text=result_str,
             tags=["math", "calculus", "scientific_calculator"],
             related_links=["Calculus", "Functions", "Equations"],
+            vault_name=target_vault,
         )
-    except Exception:
-        pass
+        conf = f"\n\n{C_BOLD}{C_GREEN}💾 SAVED TO OBSIDIAN VAULT [{target_vault}]:{C_RESET}\n  {C_GRAY}Session Note :{C_RESET} {C_CYAN}{note_p.name}{C_RESET}\n  {C_GRAY}Session Link :{C_RESET} [[Session - {active_sess}]]"
+        return result_str + conf
 
     return result_str
 

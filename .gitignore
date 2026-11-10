@@ -9,3 +9,4 @@ runs/
 build/
 sdkconfig.old
 .pytest_cache/
+host/session_state.json

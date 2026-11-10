@@ -437,6 +437,125 @@ def solve_orbital(query: str) -> str:
     return "\n".join(out)
 
 
+def explain_pascals_law(query: str) -> str:
+    """Explain Pascal's Law with mechanical advantage formulas, numerical solving, and Braille curve."""
+    m_f1 = re.search(r"f1\s*=\s*([0-9\.\-]+)", query, re.I)
+    m_a1 = re.search(r"a1\s*=\s*([0-9\.\-]+)", query, re.I)
+    m_a2 = re.search(r"a2\s*=\s*([0-9\.\-]+)", query, re.I)
+    m_d1 = re.search(r"d1\s*=\s*([0-9\.\-]+)", query, re.I)
+    m_d2 = re.search(r"d2\s*=\s*([0-9\.\-]+)", query, re.I)
+    m_h1 = re.search(r"h1\s*=\s*([0-9\.\-]+)", query, re.I)
+
+    f1 = float(m_f1.group(1)) if m_f1 else 50.0
+    h1 = float(m_h1.group(1)) if m_h1 else 0.10
+
+    if m_d1 and m_d2:
+        d1 = float(m_d1.group(1))
+        d2 = float(m_d2.group(1))
+        a1 = math.pi * (d1 / 2.0)**2
+        a2 = math.pi * (d2 / 2.0)**2
+    elif m_a1 and m_a2:
+        a1 = float(m_a1.group(1))
+        a2 = float(m_a2.group(1))
+        d1 = 2.0 * math.sqrt(a1 / math.pi)
+        d2 = 2.0 * math.sqrt(a2 / math.pi)
+    else:
+        a1 = 0.01
+        a2 = 0.25
+        d1 = 2.0 * math.sqrt(a1 / math.pi)
+        d2 = 2.0 * math.sqrt(a2 / math.pi)
+
+    P1 = f1 / a1 if a1 > 0 else 0.0
+    ma = a2 / a1 if a1 > 0 else 1.0
+    f2 = f1 * ma
+    h2 = h1 / ma if ma > 0 else 0.0
+    work = f1 * h1
+
+    out = [
+        f"{C_BOLD}{C_GREEN}⚡ PASCAL'S LAW & HYDRAULIC MECHANICAL ADVANTAGE:{C_RESET}",
+        f"  {C_GRAY}Principle Statement:{C_RESET} Pressure applied to an enclosed incompressible fluid is transmitted",
+        f"                       undiminished equally in all directions through the fluid and container walls.",
+        f"\n  {C_BOLD}{C_CYAN}▶ GOVERNING EQUATIONS:{C_RESET}",
+        f"    • {C_AMBER}Pressure Transmission :{C_RESET} P₁ = P₂  ➔  F₁ / A₁ = F₂ / A₂",
+        f"    • {C_AMBER}Output Force Amplif   :{C_RESET} F₂ = F₁ · (A₂ / A₁) = F₁ · (d₂ / d₁)²",
+        f"    • {C_AMBER}Mechanical Advantage  :{C_RESET} MA = F₂ / F₁ = A₂ / A₁",
+        f"    • {C_AMBER}Work Conservation     :{C_RESET} W = F₁ · h₁ = F₂ · h₂  (h₂ = h₁ / MA)",
+        f"\n  {C_BOLD}{C_CYAN}▶ NUMERICAL SOLUTION (HYDRAULIC LIFT SYSTEM):{C_RESET}",
+        f"    • Input Piston 1       : F₁ = {f1:.2f} N  │  Area A₁ = {a1:.4f} m²  (Diameter d₁ = {d1*100:.1f} cm)",
+        f"    • Enclosed Pressure P  : {P1:.2f} Pa ({P1/1e3:.2f} kPa)",
+        f"    • Output Piston 2      : Area A₂ = {a2:.4f} m²  (Diameter d₂ = {d2*100:.1f} cm)",
+        f"    • {C_BOLD}{C_GREEN}Mechanical Advantage  :{C_RESET} {C_BOLD}{C_WHITE}{ma:.2f}× Force Multiplication{C_RESET}",
+        f"    • {C_BOLD}{C_GREEN}Output Lift Force F₂  :{C_RESET} {C_BOLD}{C_WHITE}{f2:.2f} N{C_RESET} ({f2/9.81:.1f} kg payload capacity)",
+        f"    • Stroke Conservation  : Input h₁ = {h1*100:.1f} cm  ➔  Lift h₂ = {h2*100:.2f} cm  (Work: {work:.2f} J)",
+        f"\n  {C_GRAY}Industrial Applications:{C_RESET} Hydraulic car lifts, automobile disc brakes, hydraulic excavators, presses.",
+    ]
+
+    ratios = np.linspace(1.0, 10.0, 300)
+    forces = f1 * (ratios ** 2)
+    out.append(render_braille_curve(ratios, [(forces, C_CYAN, "Output Force F2 (N) vs Diameter Ratio d2/d1")], cols=56, rows=8))
+    return "\n".join(out)
+
+
+def explain_archimedes(query: str) -> str:
+    """Explain Archimedes' principle and buoyancy."""
+    m_rho = re.search(r"rho\s*=\s*([0-9\.\-]+)", query, re.I)
+    m_v = re.search(r"v\s*=\s*([0-9\.\-]+)", query, re.I)
+    rho = float(m_rho.group(1)) if m_rho else 1000.0  # kg/m^3 (water)
+    v_disp = float(m_v.group(1)) if m_v else 0.05    # m^3
+    g = CONSTANTS["g"][0]
+    fb = rho * v_disp * g
+
+    out = [
+        f"{C_BOLD}{C_GREEN}⚡ ARCHIMEDES' PRINCIPLE & BUOYANCY DYNAMICS:{C_RESET}",
+        f"  {C_GRAY}Principle Statement:{C_RESET} Any body completely or partially submerged in a fluid is buoyed up",
+        f"                       by a force equal to the weight of the fluid displaced by the body.",
+        f"\n  {C_BOLD}{C_CYAN}▶ GOVERNING EQUATIONS:{C_RESET}",
+        f"    • {C_AMBER}Buoyant Force F_b    :{C_RESET} F_b = ρ_fluid · V_displaced · g",
+        f"    • {C_AMBER}Apparent Weight      :{C_RESET} W_apparent = W_actual - F_b",
+        f"    • {C_AMBER}Law of Flotation     :{C_RESET} V_submerged / V_total = ρ_body / ρ_fluid",
+        f"\n  {C_BOLD}{C_CYAN}▶ NUMERICAL SOLUTION:{C_RESET}",
+        f"    • Fluid Density ρ    : {rho:.1f} kg/m³",
+        f"    • Displaced Volume V : {v_disp:.4f} m³ ({v_disp*1e3:.1f} Liters)",
+        f"    • {C_BOLD}{C_GREEN}Buoyant Upthrust F_b :{C_RESET} {C_BOLD}{C_WHITE}{fb:.2f} N{C_RESET} (Can support {fb/g:.2f} kg)",
+        f"\n  {C_GRAY}Applications:{C_RESET} Ship naval architecture, hydrometers, submarines (ballast tanks), hot air balloons.",
+    ]
+    vs = np.linspace(0.01, v_disp * 3.0, 300)
+    fbs = rho * vs * g
+    out.append(render_braille_curve(vs * 1e3, [(fbs, C_CYAN, "Buoyant Force F_b (N) vs Displaced Volume (L)")], cols=56, rows=8))
+    return "\n".join(out)
+
+
+def explain_bernoulli(query: str) -> str:
+    """Explain Bernoulli's principle & Venturi effect."""
+    out = [
+        f"{C_BOLD}{C_GREEN}⚡ BERNOULLI'S PRINCIPLE & FLUID CONTINUITY:{C_RESET}",
+        f"  {C_GRAY}Principle Statement:{C_RESET} As the speed of a moving fluid increases, the internal pressure",
+        f"                       within the fluid simultaneously decreases (conservation of mechanical energy).",
+        f"\n  {C_BOLD}{C_CYAN}▶ GOVERNING EQUATIONS:{C_RESET}",
+        f"    • {C_AMBER}Bernoulli Equation   :{C_RESET} P + ½·ρ·v² + ρ·g·h = Constant along a streamline",
+        f"    • {C_AMBER}Continuity Equation  :{C_RESET} A₁ · v₁ = A₂ · v₂ = Constant volumetric flow rate Q",
+        f"    • {C_AMBER}Venturi Pressure Drop:{C_RESET} ΔP = P₁ - P₂ = ½·ρ·(v₂² - v₁²)",
+        f"\n  {C_GRAY}Applications:{C_RESET} Aerodynamic lift on aircraft wings, perfume atomizers, carburetors, Bunsen burners.",
+    ]
+    v_axis = np.linspace(5.0, 50.0, 300)
+    rho_air = 1.225
+    p_drop = 0.5 * rho_air * (v_axis**2)
+    out.append(render_braille_curve(v_axis, [(p_drop, C_CYAN, "Dynamic Pressure ½ρv² (Pa) vs Airspeed v (m/s)")], cols=56, rows=8))
+    return "\n".join(out)
+
+
+def solve_theory(query: str) -> Optional[str]:
+    """Route conceptual physics theories and laws."""
+    q_low = query.lower()
+    if any(k in q_low for k in ["pascal", "hydraulic"]):
+        return explain_pascals_law(query)
+    elif any(k in q_low for k in ["archimedes", "buoyancy", "buoyant", "flotation"]):
+        return explain_archimedes(query)
+    elif any(k in q_low for k in ["bernoulli", "venturi"]):
+        return explain_bernoulli(query)
+    return None
+
+
 def solve_physics(query: str) -> str:
     """Main Physics Router: dispatches to domain-specific physics modules."""
     q = query.strip()
@@ -445,46 +564,64 @@ def solve_physics(query: str) -> str:
     if not q:
         return format_constants_table()
 
-    if q_low in ("obsidian", "graph", "vault", "sync"):
-        from host.obsidian_sync import open_obsidian_graph_view
-        return open_obsidian_graph_view()
+    # Check for explicit obsidian save directive
+    from host.obsidian_sync import extract_obsidian_directive, record_session_calculation, launch_obsidian_vault
+    clean_q, target_vault = extract_obsidian_directive(q)
+    clean_q_low = clean_q.lower()
 
+    if clean_q_low in ("obsidian", "graph", "vault"):
+        return launch_obsidian_vault(target_vault)
+
+    # Check for session switching commands inside physics: e.g. "session switch ExamPrep"
+    if clean_q_low.startswith("session"):
+        from host.cli import handle_session_command
+        return handle_session_command(clean_q.split()[1:])
+
+    # 0. Conceptual Laws & Theories (e.g. Pascal's Law)
+    th_res = solve_theory(clean_q)
+    if th_res:
+        res = th_res
     # 1. Constants
-    if q_low in ("const", "constants", "constant") or q_low.startswith(("constant ", "const ")):
-        token = q_low.split()[-1] if len(q_low.split()) > 1 else None
+    elif clean_q_low in ("const", "constants", "constant") or clean_q_low.startswith(("constant ", "const ")):
+        token = clean_q_low.split()[-1] if len(clean_q_low.split()) > 1 else None
         res = format_constants_table(token)
-    elif any(k in q_low for k in ["projectile", "ballistics", "trajectory", "launch", "angle="]):
-        res = solve_projectile(q)
-    elif any(k in q_low for k in ["oscillator", "damping", "resonance", "harmonic", "spring", "damping ratio"]):
-        res = solve_oscillator(q)
-    elif any(k in q_low for k in ["rlc", "circuit", "inductor", "capacitor", "impedance", "transient"]):
-        res = solve_rlc(q)
-    elif any(k in q_low for k in ["relativity", "lorentz", "gamma", "dilation", "contraction", "einstein"]) or ("0." in q_low and "c" in q_low):
-        res = solve_relativity(q)
-    elif any(k in q_low for k in ["bohr", "quantum", "photoelectric", "blackbody", "de broglie", "planck", "photon", "hydrogen"]):
-        res = solve_quantum(q)
-    elif any(k in q_low for k in ["orbit", "kepler", "satellite", "escape velocity", "gravitation"]):
-        res = solve_orbital(q)
-    elif "v=" in q_low or "speed=" in q_low:
-        res = solve_projectile(q)
-    elif "r=" in q_low and "l=" in q_low:
-        res = solve_rlc(q)
+    elif any(k in clean_q_low for k in ["projectile", "ballistics", "trajectory", "launch", "angle="]):
+        res = solve_projectile(clean_q)
+    elif any(k in clean_q_low for k in ["oscillator", "damping", "resonance", "harmonic", "spring", "damping ratio"]):
+        res = solve_oscillator(clean_q)
+    elif any(k in clean_q_low for k in ["rlc", "circuit", "inductor", "capacitor", "impedance", "transient"]):
+        res = solve_rlc(clean_q)
+    elif any(k in clean_q_low for k in ["relativity", "lorentz", "gamma", "dilation", "contraction", "einstein"]) or ("0." in clean_q_low and "c" in clean_q_low):
+        res = solve_relativity(clean_q)
+    elif any(k in clean_q_low for k in ["bohr", "quantum", "photoelectric", "blackbody", "de broglie", "planck", "photon", "hydrogen"]):
+        res = solve_quantum(clean_q)
+    elif any(k in clean_q_low for k in ["orbit", "kepler", "satellite", "escape velocity", "gravitation"]):
+        res = solve_orbital(clean_q)
+    elif "v=" in clean_q_low or "speed=" in clean_q_low:
+        res = solve_projectile(clean_q)
+    elif "r=" in clean_q_low and "l=" in clean_q_low:
+        res = solve_rlc(clean_q)
     else:
-        res = format_constants_table(q)
+        res = format_constants_table(clean_q)
 
-    # Sync to Obsidian
-    try:
-        from host.obsidian_sync import record_session_calculation
-        record_session_calculation(
+    # Record in active session history
+    from host.session_manager import record_calc_in_session, get_active_session
+    record_calc_in_session("Physics", clean_q, res)
+    active_sess = get_active_session()
+
+    # ONLY write to Obsidian if explicitly requested!
+    if target_vault:
+        note_p = record_session_calculation(
             domain="Physics",
-            title=f"Physics - {q[:30]}",
-            query=q,
+            title=f"Physics - {clean_q[:30]}",
+            query=clean_q,
             result_text=res,
-            tags=["physics", "simulation"],
-            related_links=["Mechanics", "Electromagnetism", "Relativity", "Quantum Mechanics"],
+            tags=["physics", "theory" if th_res else "simulation"],
+            related_links=["Mechanics", "Pascal's Law" if "pascal" in clean_q_low else "Physics"],
+            vault_name=target_vault,
         )
-    except Exception:
-        pass
+        conf = f"\n\n{C_BOLD}{C_GREEN}💾 SAVED TO OBSIDIAN VAULT [{target_vault}]:{C_RESET}\n  {C_GRAY}Session Note :{C_RESET} {C_CYAN}{note_p.name}{C_RESET}\n  {C_GRAY}Session Link :{C_RESET} [[Session - {active_sess}]]"
+        return res + conf
 
     return res
 

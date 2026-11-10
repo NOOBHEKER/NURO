@@ -1,21 +1,30 @@
-"""Obsidian Graph View & Session Calculation Sync for nuro.
+"""Obsidian Graph View & Dynamic Vault Sync for nuro.
 
-Syncs all calculations, reactions, and physics formulas solved across nuro sessions
-into an interconnected Obsidian vault at 'G:\\obsidian\\Neural Loop Calculations'
-with a high-contrast color-coded Graph View and bidirectional [[wikilinks]].
+Capabilities:
+1. Explicit Vault Targeting:
+   - Saves calculation ONLY when explicitly instructed with a vault name:
+     e.g., 'to obsidian Acids, Bases and Salts', 'save to obsidian ICSE Class 10', 'to obsidian Radioactivity'
+   - Fuzzy resolves existing vaults in G:\\obsidian or creates new ones.
+2. Dynamic Session Tracking:
+   - Groups notes by active session: [[Session - <name>]]
+   - Auto-updates session index inside the selected Obsidian vault.
+3. Interactive Graph View Launch:
+   - Directly opens the targeted vault via 'obsidian://open?vault=...'
 """
 from __future__ import annotations
 
 import datetime
 import json
 import os
+import re
 import subprocess
 import sys
 import webbrowser
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 
-VAULT_PATH = Path("G:/obsidian/Neural Loop Calculations")
+OBSIDIAN_ROOT = Path("G:/obsidian")
+DEFAULT_VAULT_NAME = "Neural Loop Calculations"
 OBSIDIAN_EXE = Path("G:/obsidian/Obsidian.com")
 
 C_RESET = "\033[0m"
@@ -28,13 +37,67 @@ C_GRAY = "\033[38;5;244m"
 C_WHITE = "\033[38;5;255m"
 
 
-def ensure_vault_initialized() -> None:
+def extract_obsidian_directive(query: str) -> Tuple[str, Optional[str]]:
+    """Check if query requests saving to Obsidian with a vault name.
+    Examples:
+      - '2SO2 + O2 -> 2SO3 to obsidian Acids, Bases and Salts'
+      - 'pascals law F1=50 save to obsidian ICSE Class 10'
+      - 'x^3 - 3*x obsidian: DevStack'
+    Returns (cleaned_query, vault_name or None).
+    """
+    patterns = [
+        r"(?:save\s+)?to\s+obsidian(?:\s+vault)?(?:\s*[:=]\s*|\s+)([\w\s,\-]+)$",
+        r"\bobsidian(?:\s+vault)?(?:\s*[:=]\s*|\s+)([\w\s,\-]+)$",
+        r"--(?:vault|obsidian)\s+([\w\s,\-]+)$",
+    ]
+    for p in patterns:
+        m = re.search(p, query, flags=re.I)
+        if m:
+            vault_name = m.group(1).strip()
+            # Clean off trailing quotation marks if any
+            vault_name = vault_name.strip("\"'")
+            cleaned_query = query[:m.start()].strip()
+            return cleaned_query, vault_name
+
+    # Check for simple bare 'to obsidian' without vault name
+    m_bare = re.search(r"(?:save\s+)?to\s+obsidian\s*$", query, flags=re.I)
+    if m_bare:
+        cleaned_query = query[:m_bare.start()].strip()
+        return cleaned_query, DEFAULT_VAULT_NAME
+
+    return query, None
+
+
+def resolve_vault_path(vault_name: Optional[str] = None) -> Tuple[Path, str]:
+    """Resolve vault name against existing vaults in G:\\obsidian or create a new one."""
+    OBSIDIAN_ROOT.mkdir(parents=True, exist_ok=True)
+    if not vault_name:
+        vault_name = DEFAULT_VAULT_NAME
+
+    # Check exact match first
+    target = OBSIDIAN_ROOT / vault_name
+    if target.exists() and target.is_dir():
+        return target, target.name
+
+    # Fuzzy match among existing directories
+    v_low = vault_name.lower()
+    for d in OBSIDIAN_ROOT.iterdir():
+        if d.is_dir() and not d.name.startswith("."):
+            d_low = d.name.lower()
+            if v_low == d_low or v_low in d_low or d_low in v_low:
+                return d, d.name
+
+    # If not found, create new vault directory
+    target.mkdir(parents=True, exist_ok=True)
+    return target, vault_name
+
+
+def ensure_vault_initialized(vault_path: Path) -> None:
     """Initialize Obsidian vault folder and graph.json color groups."""
-    VAULT_PATH.mkdir(parents=True, exist_ok=True)
-    obsidian_dir = VAULT_PATH / ".obsidian"
+    vault_path.mkdir(parents=True, exist_ok=True)
+    obsidian_dir = vault_path / ".obsidian"
     obsidian_dir.mkdir(parents=True, exist_ok=True)
 
-    # Core plugins config
     core_plugins_path = obsidian_dir / "core-plugins.json"
     if not core_plugins_path.exists():
         core_plugins_path.write_text(
@@ -42,83 +105,70 @@ def ensure_vault_initialized() -> None:
             encoding="utf-8",
         )
 
-    # App config
     app_json = obsidian_dir / "app.json"
     if not app_json.exists():
         app_json.write_text(
-            json.dumps({"showLineNumber": True, "useTab": True, "tabSize": 2, "attachmentFolderPath": "attachments"}, indent=2),
+            json.dumps({"showLineNumber": True, "useTab": True, "tabSize": 2}, indent=2),
             encoding="utf-8",
         )
 
-    # High-contrast color-coded graph configuration
     graph_json = obsidian_dir / "graph.json"
-    graph_config = {
-        "collapse-filter": False,
-        "search": "",
-        "showTags": True,
-        "showAttachments": False,
-        "hideUnresolved": False,
-        "showOrphans": True,
-        "collapse-color-groups": False,
-        "colorGroups": [
-            {"query": "path:\"00 - Session Hub\"", "color": {"a": 1, "rgb": 16498468}},  # Gold (MOC)
-            {"query": "path:\"Math\"", "color": {"a": 1, "rgb": 3900150}},              # Cyan (Math)
-            {"query": "path:\"Chemistry\"", "color": {"a": 1, "rgb": 1096065}},         # Emerald Green (Chem)
-            {"query": "path:\"Physics\"", "color": {"a": 1, "rgb": 16096779}},          # Amber (Physics)
-            {"query": "path:\"Catalysts\"", "color": {"a": 1, "rgb": 15680580}},        # Rose Red (Catalysts)
-            {"query": "path:\"Concepts\"", "color": {"a": 1, "rgb": 11032311}},         # Purple (Concepts)
-        ],
-        "collapse-display": False,
-        "showArrow": True,
-        "textFadeMultiplier": -2.5,
-        "nodeSizeMultiplier": 1.45,
-        "lineSizeMultiplier": 1.3,
-        "collapse-forces": False,
-        "centerStrength": 0.45,
-        "repelStrength": 16.0,
-        "linkStrength": 0.75,
-        "linkDistance": 180,
-        "scale": 0.35,
-        "close": False,
-    }
-    # Write graph config
-    graph_json.write_text(json.dumps(graph_config, indent=2), encoding="utf-8")
+    if not graph_json.exists():
+        graph_config = {
+            "collapse-filter": False,
+            "search": "",
+            "showTags": True,
+            "showAttachments": False,
+            "hideUnresolved": False,
+            "showOrphans": True,
+            "collapse-color-groups": False,
+            "colorGroups": [
+                {"query": "path:\"Session\"", "color": {"a": 1, "rgb": 16498468}},        # Gold
+                {"query": "path:\"Math\"", "color": {"a": 1, "rgb": 3900150}},            # Cyan
+                {"query": "path:\"Chemistry\"", "color": {"a": 1, "rgb": 1096065}},       # Emerald
+                {"query": "path:\"Physics\"", "color": {"a": 1, "rgb": 16096779}},        # Amber
+                {"query": "path:\"Theories\"", "color": {"a": 1, "rgb": 11032311}},       # Purple
+            ],
+            "nodeSizeMultiplier": 1.4,
+            "lineSizeMultiplier": 1.3,
+            "showArrow": True,
+            "scale": 0.35,
+            "close": False,
+        }
+        graph_json.write_text(json.dumps(graph_config, indent=2), encoding="utf-8")
 
 
 def sanitize_filename(name: str) -> str:
     """Sanitize strings for Windows filenames."""
-    clean = re_clean = "".join(c if c.isalnum() or c in (" ", "-", "_", "+", "^") else "_" for c in name)
+    clean = "".join(c if c.isalnum() or c in (" ", "-", "_", "+", "^") else "_" for c in name)
     return clean.strip()[:60]
 
 
 def record_session_calculation(
-    domain: str,  # 'Math', 'Chemistry', 'Physics'
+    domain: str,
     title: str,
     query: str,
     result_text: str,
     tags: List[str],
     related_links: List[str],
+    vault_name: Optional[str] = None,
 ) -> Path:
-    """Record a calculation into the Obsidian vault with bidirectional [[wikilinks]]."""
-    ensure_vault_initialized()
+    """Record calculation to the explicitly requested Obsidian vault with session link."""
+    from host.session_manager import get_active_session
 
-    domain_clean = domain.capitalize()
-    domain_dir = VAULT_PATH / domain_clean
-    domain_dir.mkdir(parents=True, exist_ok=True)
+    active_session = get_active_session()
+    vault_path, actual_vault_name = resolve_vault_path(vault_name)
+    ensure_vault_initialized(vault_path)
+
+    # Save inside a dedicated Session folder in the vault
+    session_dir = vault_path / f"Session - {sanitize_filename(active_session)}"
+    session_dir.mkdir(parents=True, exist_ok=True)
 
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     file_title = f"{sanitize_filename(title)}.md"
-    note_path = domain_dir / file_title
+    note_path = session_dir / file_title
 
-    # Build Wikilinks block
-    wikilinks = [f"[[00 - Session Hub (MOC)]]", f"[[Domain - {domain_clean}]]"]
-    for link in related_links:
-        wikilinks.append(f"[[{link}]]")
-
-    links_str = " ".join(wikilinks)
-    tags_str = " ".join(f"#{t.replace(' ', '_')}" for t in tags)
-
-    # Strip ANSI colors for Obsidian note
+    # Stripping ANSI escape sequences
     ansi_stripped = ""
     in_escape = False
     for char in result_text:
@@ -130,9 +180,18 @@ def record_session_calculation(
         else:
             ansi_stripped += char
 
+    wikilinks = [
+        f"[[Session - {active_session}]]",
+        f"[[Domain - {domain.capitalize()}]]",
+    ]
+    for link in related_links:
+        wikilinks.append(f"[[{link}]]")
+
     content = f"""---
 title: "{title}"
-domain: "{domain_clean}"
+domain: "{domain.capitalize()}"
+session: "{active_session}"
+vault: "{actual_vault_name}"
 timestamp: "{timestamp}"
 tags: [{', '.join(f'"{t}"' for t in tags)}]
 query: "{query.replace('"', "'")}"
@@ -140,108 +199,67 @@ query: "{query.replace('"', "'")}"
 
 # {title}
 
-> **Domain:** [[Domain - {domain_clean}]] | **Logged:** `{timestamp}`
-> **Connected Nodes:** {links_str}
-> **Tags:** {tags_str}
+> **Vault:** `{actual_vault_name}` | **Session:** [[Session - {active_session}]] | **Logged:** `{timestamp}`
+> **Connected Nodes:** {' '.join(wikilinks)}
+> **Tags:** {' '.join(f'#{t}' for t in tags)}
 
 ## ⚡ Query
 ```text
 {query}
 ```
 
-## 📊 Result & Solution
+## 📊 Solution & Model
 ```text
 {ansi_stripped.strip()}
 ```
 
-## 🔗 Related Knowledge Nodes
+## 🔗 Knowledge Graph Connections
+- [[Session - {active_session}]]
+- [[Domain - {domain.capitalize()}]]
 {"".join(f"- [[{link}]]\n" for link in related_links)}
-- [[00 - Session Hub (MOC)]]
-- [[Domain - {domain_clean}]]
 
 ---
-*Generated by nuro v2.0 session engine*
+*nuro v2.0 dynamic session sync*
 """
     note_path.write_text(content, encoding="utf-8")
 
-    # Update Domain index and Hub MOC
-    update_domain_index(domain_clean)
-    update_hub_moc()
-
+    # Update session MOC note
+    update_session_moc(vault_path, actual_vault_name, active_session)
     return note_path
 
 
-def update_domain_index(domain: str) -> None:
-    """Regenerate domain MOC index note."""
-    domain_dir = VAULT_PATH / domain
-    notes = sorted([f for f in domain_dir.glob("*.md") if f.name != f"Index - {domain}.md"])
+def update_session_moc(vault_path: Path, vault_name: str, session_name: str) -> None:
+    """Update or create the Session Map of Content note in the vault."""
+    session_dir = vault_path / f"Session - {sanitize_filename(session_name)}"
+    notes = sorted([f for f in session_dir.glob("*.md")])
 
     content = f"""---
-title: "Domain - {domain}"
-domain: "{domain}"
+title: "Session - {session_name}"
+type: "session_moc"
+vault: "{vault_name}"
+total_calculations: {len(notes)}
 ---
 
-# 🌐 {domain} — Calculation Index
+# 📚 Session — {session_name}
 
-> **Connected Hub:** [[00 - Session Hub (MOC)]]
-> **Total Notes:** {len(notes)}
+> **Obsidian Vault:** `{vault_name}`
+> **Active Notes:** {len(notes)} calculations & models
 
-## Calculations & Models
+## Calculations & Theories in this Session
 {"".join(f"- [[{n.stem}]]\n" for n in notes)}
 
 ---
-*Neural Loop Obsidian Knowledge Graph*
+*Press `Ctrl + G` in Obsidian to see this session's interconnected visual graph!*
 """
-    (VAULT_PATH / f"Domain - {domain}.md").write_text(content, encoding="utf-8")
+    (vault_path / f"Session - {sanitize_filename(session_name)}.md").write_text(content, encoding="utf-8")
 
 
-def update_hub_moc() -> None:
-    """Regenerate Master Map of Content (MOC)."""
-    domains = ["Math", "Chemistry", "Physics"]
-    total_notes = len(list(VAULT_PATH.glob("**/*.md")))
+def launch_obsidian_vault(vault_name: Optional[str] = None) -> str:
+    """Open specified Obsidian vault in Obsidian."""
+    vault_path, actual_name = resolve_vault_path(vault_name)
+    ensure_vault_initialized(vault_path)
 
-    sections = []
-    for d in domains:
-        d_path = VAULT_PATH / d
-        if d_path.exists():
-            notes = sorted(list(d_path.glob("*.md")))
-            links = "\n".join(f"  - [[{n.stem}]]" for n in notes[:10])
-            if len(notes) > 10:
-                links += f"\n  - *...and {len(notes) - 10} more in [[Domain - {d}]]*"
-            sections.append(f"### [[Domain - {d}]] ({len(notes)} items)\n{links}")
-
-    content = f"""---
-title: "Neural Loop Session Hub (MOC)"
-tags: [hub, moc, nuro, neural_loop]
----
-
-# 🧠 Neural Loop — Master Calculation & Science Hub
-
-Welcome to the live interactive knowledge graph of calculations, chemistry reaction pathways, and physics simulations solved during `nuro` sessions.
-
-## 📌 Domain Maps
-- [[Domain - Math]] — Derivatives, Integrals, Roots, Multi-function Braille plots
-- [[Domain - Chemistry]] — Balanced reactions, Catalytic activation barriers, Stoichiometry, Titrations
-- [[Domain - Physics]] — Ballistics, RLC Transients, Special Relativity, Quantum Transitions, Orbital Mechanics
-
-## 📚 Recent Session Calculations
-{chr(10).join(sections)}
-
----
-*Press `Ctrl+G` inside Obsidian to open the interactive Color-Coded Graph View!*
-"""
-    (VAULT_PATH / "00 - Session Hub (MOC).md").write_text(content, encoding="utf-8")
-
-
-def open_obsidian_graph_view() -> str:
-    """Open the Obsidian vault and instruct the user how to view the Graph."""
-    ensure_vault_initialized()
-    update_hub_moc()
-
-    vault_name = "Neural Loop Calculations"
-    uri = f"obsidian://open?vault={vault_name.replace(' ', '%20')}"
-
-    # Try launching Obsidian via URI or executable
+    uri = f"obsidian://open?vault={actual_name.replace(' ', '%20')}"
     try:
         webbrowser.open(uri)
     except Exception:
@@ -249,15 +267,15 @@ def open_obsidian_graph_view() -> str:
 
     if OBSIDIAN_EXE.exists():
         try:
-            subprocess.Popen([str(OBSIDIAN_EXE), str(VAULT_PATH)], shell=True)
+            subprocess.Popen([str(OBSIDIAN_EXE), str(vault_path)], shell=True)
         except Exception:
             pass
 
     out = [
-        f"{C_BOLD}{C_GREEN}⚡ OBSIDIAN GRAPH VIEW SYNCED & LAUNCHED:{C_RESET}",
-        f"  {C_GRAY}Vault Directory :{C_RESET} {C_WHITE}{VAULT_PATH}{C_RESET}",
-        f"  {C_BOLD}{C_CYAN}Obsidian URI    :{C_RESET} {C_CYAN}{uri}{C_RESET}",
-        f"  {C_AMBER}Master Hub Note :{C_RESET} {C_WHITE}00 - Session Hub (MOC).md{C_RESET}",
-        f"  {C_PURPLE}Graph View Key  :{C_RESET} Press {C_BOLD}{C_WHITE}Ctrl + G{C_RESET} in Obsidian to expand the color-coded node web!",
+        f"{C_BOLD}{C_GREEN}⚡ OBSIDIAN VAULT SYNCED & LAUNCHED:{C_RESET}",
+        f"  {C_GRAY}Target Vault    :{C_RESET} {C_BOLD}{C_WHITE}{actual_name}{C_RESET}",
+        f"  {C_GRAY}Directory Path  :{C_RESET} {C_CYAN}{vault_path}{C_RESET}",
+        f"  {C_BOLD}{C_CYAN}Obsidian URI    :{C_RESET} {uri}",
+        f"  {C_PURPLE}Graph View Key  :{C_RESET} Press {C_BOLD}{C_WHITE}Ctrl + G{C_RESET} inside Obsidian to open the node web!",
     ]
     return "\n".join(out)

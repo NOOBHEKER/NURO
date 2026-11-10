@@ -17,6 +17,40 @@ import sys
 import webbrowser
 
 
+def handle_session_command(args: List[str]) -> str:
+    """Manage named calculation sessions."""
+    from host.session_manager import get_active_session, set_active_session, list_sessions
+    from host.calc import C_BOLD, C_GREEN, C_CYAN, C_AMBER, C_RESET, C_WHITE, C_GRAY
+
+    if not args or args[0].lower() in ("list", "status", "show", "current"):
+        active = get_active_session()
+        sessions = list_sessions()
+        out = [
+            f"{C_BOLD}{C_GREEN}⚡ NURO CALCULATION SESSIONS:{C_RESET}",
+            f"  {C_GRAY}Active Session  :{C_RESET} {C_BOLD}{C_CYAN}{active}{C_RESET}",
+            f"\n  {C_GRAY}All Available Sessions:{C_RESET}",
+        ]
+        for name, is_act, count, desc in sessions:
+            marker = f"{C_BOLD}{C_GREEN}▶ [ACTIVE]{C_RESET}" if is_act else f"  {C_GRAY}[      ]{C_RESET}"
+            out.append(f"  {marker} {C_WHITE}{name:<22}{C_RESET} ({count} calcs) {C_GRAY}{desc}{C_RESET}")
+        out.append(f"\n  {C_GRAY}Switch Session :{C_RESET} nuro session switch <name>  │  session <name>")
+        return "\n".join(out)
+
+    subcmd = args[0].lower()
+    if subcmd in ("switch", "use", "select", "new", "create", "set"):
+        if len(args) < 2:
+            return f"{C_AMBER}[WARN]: Please specify session name: session switch <name>{C_RESET}"
+        name = " ".join(args[1:])
+    else:
+        name = " ".join(args)
+
+    new_sess = set_active_session(name)
+    return (
+        f"{C_BOLD}{C_GREEN}⚡ ACTIVE SESSION SWITCHED TO:{C_RESET} {C_BOLD}{C_CYAN}{new_sess}{C_RESET}\n"
+        f"  {C_GRAY}Subsequent calculations saved to Obsidian will be linked under [[Session - {new_sess}]]!{C_RESET}"
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="nuro",
@@ -66,9 +100,15 @@ def main() -> None:
     p_phy = sub.add_parser("phy", help="Over-the-Top Physics Engine (Mechanics, RLC, Relativity, Quantum)")
     p_phy.add_argument("query", nargs="*", help="Optional physics query (e.g. 'projectile v=50 angle=45')")
 
+    # nuro session (Manage & Switch Named Calculation Sessions)
+    p_session = sub.add_parser("session", help="Manage, list, and switch named calculation sessions")
+    p_session.add_argument("args", nargs="*", help="Subcommands: switch <name>, new <name>, list")
+
     # nuro obsidian / graph (Open Obsidian Color-Coded Graph View of Session Calculations)
-    sub.add_parser("obsidian", help="Sync & launch Obsidian interactive Color-Coded Graph View")
-    sub.add_parser("graph", help="Sync & launch Obsidian interactive Color-Coded Graph View")
+    p_obs = sub.add_parser("obsidian", help="Sync & launch Obsidian interactive Color-Coded Graph View")
+    p_obs.add_argument("vault", nargs="*", help="Optional vault name in G:\\obsidian (e.g. 'ICSE Class 10')")
+    p_graph = sub.add_parser("graph", help="Sync & launch Obsidian interactive Color-Coded Graph View")
+    p_graph.add_argument("vault", nargs="*", help="Optional vault name in G:\\obsidian")
 
     # nuro solve / math
     p_solve = sub.add_parser("solve", help="Natural-language formula solver with Unicode graph")
@@ -80,17 +120,20 @@ def main() -> None:
     if not args.command and unknown:
         q_raw = " ".join(unknown)
         q_low = q_raw.lower()
-        if "obsidian" in q_low or "graph" in q_low or "vault" in q_low:
-            from host.obsidian_sync import open_obsidian_graph_view
-            print(open_obsidian_graph_view())
+        if q_low.startswith("session"):
+            print(handle_session_command(unknown[1:]))
             return
         elif "->" in q_raw or "➔" in q_raw or any(w in q_low for w in ["molar mass", "titration", "kinetics", "kmno4"]):
             from host.chem import solve_chem_numerical
             print(solve_chem_numerical(q_raw))
             return
-        elif any(w in q_low for w in ["projectile", "rlc", "relativity", "bohr", "blackbody", "photoelectric", "lorentz", "damping"]):
+        elif any(w in q_low for w in ["projectile", "rlc", "relativity", "bohr", "blackbody", "photoelectric", "lorentz", "damping", "pascal", "hydraulic", "archimedes"]):
             from host.phy import solve_physics
             print(solve_physics(q_raw))
+            return
+        elif "obsidian" in q_low or "graph" in q_low or "vault" in q_low:
+            from host.obsidian_sync import launch_obsidian_vault
+            print(launch_obsidian_vault())
             return
         else:
             from host.calc import calculate_and_graph
@@ -181,9 +224,15 @@ def main() -> None:
         else:
             run_phy_repl()
 
+    elif cmd == "session":
+        s_args = getattr(args, "args", [])
+        print(handle_session_command(s_args))
+
     elif cmd in ("obsidian", "graph"):
-        from host.obsidian_sync import open_obsidian_graph_view
-        print(open_obsidian_graph_view())
+        from host.obsidian_sync import launch_obsidian_vault
+        v_list = getattr(args, "vault", [])
+        v_name = " ".join(v_list) if v_list else None
+        print(launch_obsidian_vault(v_name))
 
     elif cmd == "solve":
         from host.calc import calculate_and_graph

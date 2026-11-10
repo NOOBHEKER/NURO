@@ -506,177 +506,166 @@ def balance_chemical_equation(equation: str) -> str:
                f"{'(Effervescence ↑)' if has_gas else ''} {'(Precipitation ↓)' if has_precip else ''}")
 
     result_str = "\n".join(out)
-
-    # Sync to Obsidian
-    try:
-        from host.obsidian_sync import record_session_calculation
-        record_session_calculation(
-            domain="Chemistry",
-            title=f"Reaction - {balanced_str[:40]}",
-            query=equation,
-            result_text=result_str,
-            tags=["chemistry", "reaction", "stoichiometry", "catalysis" if catalyst_key else "balance"],
-            related_links=[s[0] for s in species_dicts] + (["Catalysts", catalyst_key] if catalyst_key else []),
-        )
-    except Exception:
-        pass
-
     return result_str
 
 
 def solve_chem_numerical(query: str) -> str:
     """Solve chemistry numericals: pH/pOH, Gas laws, Kinetics, Electrochemistry, Molar mass."""
     q = query.strip()
-    q_low = q.lower()
+    if not q:
+        return ""
+
+    from host.obsidian_sync import extract_obsidian_directive, record_session_calculation, launch_obsidian_vault
+    clean_q, target_vault = extract_obsidian_directive(q)
+    clean_q_low = clean_q.lower()
+
+    # Session switching inside chem REPL
+    if clean_q_low.startswith("session"):
+        from host.cli import handle_session_command
+        return handle_session_command(clean_q.split()[1:])
 
     # Obsidian / Graph view trigger
-    if q_low in ("obsidian", "graph", "vault", "sync"):
-        from host.obsidian_sync import open_obsidian_graph_view
-        return open_obsidian_graph_view()
+    if clean_q_low in ("obsidian", "graph", "vault", "sync"):
+        return launch_obsidian_vault(target_vault)
 
     # 1. Chemical Equation Balancing
-    if "->" in q or "➔" in q or ("=" in q and any(c.isupper() for c in q)):
-        return balance_chemical_equation(q)
-
-    out: List[str] = []
-
-    # 2. Molar Mass / Molecular Weight
-    if q_low.startswith(("mass", "molar mass", "mw", "molecular weight", "formula mass")) or (len(q.split()) == 1 and any(c.isupper() for c in q)):
-        formula = re.sub(r"^(molar mass of|molecular weight of|formula weight of|mass of|molar mass|mw|mass)\s+", "", q, flags=re.I).strip()
-        try:
-            mass, pcts = compute_molar_mass(formula)
-            out.append(f"{C_BOLD}{C_GREEN}⚡ MOLAR MASS & STOICHIOMETRY:{C_RESET} {C_WHITE}{formula}{C_RESET}")
-            out.append(f"  {C_BOLD}{C_CYAN}Molar Mass (M) :{C_RESET} {C_BOLD}{C_WHITE}{mass:.4f} g/mol{C_RESET}")
-            out.append(f"  {C_GRAY}Elemental Mass Composition:{C_RESET}")
-            for el, pct in pcts.items():
-                bar = "█" * int(pct // 4)
-                out.append(f"    {C_AMBER}{el:>2}{C_RESET} : {pct:6.2f}% │ \033[38;5;75m{bar}\033[0m")
-            res = "\n".join(out)
+    if "->" in clean_q or "➔" in clean_q or ("=" in clean_q and any(c.isupper() for c in clean_q)):
+        res = balance_chemical_equation(clean_q)
+    else:
+        out: List[str] = []
+        # 2. Molar Mass / Molecular Weight
+        if clean_q_low.startswith(("mass", "molar mass", "mw", "molecular weight", "formula mass")) or (len(clean_q.split()) == 1 and any(c.isupper() for c in clean_q)):
+            formula = re.sub(r"^(molar mass of|molecular weight of|formula weight of|mass of|molar mass|mw|mass)\s+", "", clean_q, flags=re.I).strip()
             try:
-                from host.obsidian_sync import record_session_calculation
-                record_session_calculation("Chemistry", f"MolarMass - {formula}", q, res, ["chemistry", "molar_mass"], [formula, "Molar Mass"])
+                mass, pcts = compute_molar_mass(formula)
+                out.append(f"{C_BOLD}{C_GREEN}⚡ MOLAR MASS & STOICHIOMETRY:{C_RESET} {C_WHITE}{formula}{C_RESET}")
+                out.append(f"  {C_BOLD}{C_CYAN}Molar Mass (M) :{C_RESET} {C_BOLD}{C_WHITE}{mass:.4f} g/mol{C_RESET}")
+                out.append(f"  {C_GRAY}Elemental Mass Composition:{C_RESET}")
+                for el, pct in pcts.items():
+                    bar = "█" * int(pct // 4)
+                    out.append(f"    {C_AMBER}{el:>2}{C_RESET} : {pct:6.2f}% │ \033[38;5;75m{bar}\033[0m")
+                res = "\n".join(out)
             except Exception:
-                pass
-            return res
-        except Exception:
-            pass
-
-    # 3. Acid-Base pH & Titration Curve
-    if "ph" in q_low or "poh" in q_low or "titration" in q_low:
-        m_conc = re.search(r"([0-9\.\-]+)\s*(m|molar|mol/l)", q_low)
-        conc = float(m_conc.group(1)) if m_conc else 0.1
-        if "base" in q_low or "naoh" in q_low or "koh" in q_low or "poh" in q_low:
-            poh = -math.log10(conc)
-            ph = 14.0 - poh
-            out.append(f"{C_BOLD}{C_GREEN}⚡ STRONG BASE SOLUTION pOH / pH:{C_RESET}")
-            out.append(f"  {C_GRAY}[OH-] Concentration :{C_RESET} {conc:.4e} M")
-            out.append(f"  {C_AMBER}pOH = -log10[OH-]    :{C_RESET} {poh:.3f}")
-            out.append(f"  {C_BOLD}{C_CYAN}pH  = 14.0 - pOH     :{C_RESET} {C_BOLD}{C_WHITE}{ph:.3f}{C_RESET}")
-        else:
-            ph = -math.log10(conc)
-            poh = 14.0 - ph
-            out.append(f"{C_BOLD}{C_GREEN}⚡ STRONG ACID SOLUTION pH / pOH:{C_RESET}")
-            out.append(f"  {C_GRAY}[H+] Concentration  :{C_RESET} {conc:.4e} M")
-            out.append(f"  {C_BOLD}{C_CYAN}pH = -log10[H+]      :{C_RESET} {C_BOLD}{C_WHITE}{ph:.3f}{C_RESET}")
-            out.append(f"  {C_AMBER}pOH = 14.0 - pH      :{C_RESET} {poh:.3f}")
-
-        v_naoh = np.linspace(0.1, 50.0, 300)
-        v_acid = 25.0
-        c_acid = conc
-        c_base = conc
-        ph_curve = []
-        for v in v_naoh:
-            moles_acid = (v_acid * 1e-3) * c_acid
-            moles_base = (v * 1e-3) * c_base
-            tot_v = (v_acid + v) * 1e-3
-            if moles_acid > moles_base:
-                h_plus = (moles_acid - moles_base) / tot_v
-                ph_curve.append(-math.log10(max(1e-14, h_plus)))
-            elif moles_base > moles_acid:
-                oh_minus = (moles_base - moles_acid) / tot_v
-                ph_curve.append(14.0 - (-math.log10(max(1e-14, oh_minus))))
+                res = balance_chemical_equation(clean_q)
+        # 3. Acid-Base pH & Titration Curve
+        elif "ph" in clean_q_low or "poh" in clean_q_low or "titration" in clean_q_low:
+            m_conc = re.search(r"([0-9\.\-]+)\s*(m|molar|mol/l)", clean_q_low)
+            conc = float(m_conc.group(1)) if m_conc else 0.1
+            if "base" in clean_q_low or "naoh" in clean_q_low or "koh" in clean_q_low or "poh" in clean_q_low:
+                poh = -math.log10(conc)
+                ph = 14.0 - poh
+                out.append(f"{C_BOLD}{C_GREEN}⚡ STRONG BASE SOLUTION pOH / pH:{C_RESET}")
+                out.append(f"  {C_GRAY}[OH-] Concentration :{C_RESET} {conc:.4e} M")
+                out.append(f"  {C_AMBER}pOH = -log10[OH-]    :{C_RESET} {poh:.3f}")
+                out.append(f"  {C_BOLD}{C_CYAN}pH  = 14.0 - pOH     :{C_RESET} {C_BOLD}{C_WHITE}{ph:.3f}{C_RESET}")
             else:
-                ph_curve.append(7.0)
+                ph = -math.log10(conc)
+                poh = 14.0 - ph
+                out.append(f"{C_BOLD}{C_GREEN}⚡ STRONG ACID SOLUTION pH / pOH:{C_RESET}")
+                out.append(f"  {C_GRAY}[H+] Concentration  :{C_RESET} {conc:.4e} M")
+                out.append(f"  {C_BOLD}{C_CYAN}pH = -log10[H+]      :{C_RESET} {C_BOLD}{C_WHITE}{ph:.3f}{C_RESET}")
+                out.append(f"  {C_AMBER}pOH = 14.0 - pH      :{C_RESET} {poh:.3f}")
 
-        out.append(render_braille_curve(v_naoh, [(np.array(ph_curve), C_CYAN, "pH Titration (V_base mL)")], cols=54, rows=7))
-        res = "\n".join(out)
-        try:
-            from host.obsidian_sync import record_session_calculation
-            record_session_calculation("Chemistry", f"pH - {conc}M", q, res, ["chemistry", "acid_base", "pH"], ["pH Scale", "Titration", "Neutralisation"])
-        except Exception:
-            pass
-        return res
+            v_naoh = np.linspace(0.1, 50.0, 300)
+            v_acid = 25.0
+            c_acid = conc
+            c_base = conc
+            ph_curve = []
+            for v in v_naoh:
+                moles_acid = (v_acid * 1e-3) * c_acid
+                moles_base = (v * 1e-3) * c_base
+                tot_v = (v_acid + v) * 1e-3
+                if moles_acid > moles_base:
+                    h_plus = (moles_acid - moles_base) / tot_v
+                    ph_curve.append(-math.log10(max(1e-14, h_plus)))
+                elif moles_base > moles_acid:
+                    oh_minus = (moles_base - moles_acid) / tot_v
+                    ph_curve.append(14.0 - (-math.log10(max(1e-14, oh_minus))))
+                else:
+                    ph_curve.append(7.0)
 
-    # 4. Chemical Kinetics (Decay & Rate Laws)
-    if any(k in q_low for k in ["kinetics", "half life", "half-life", "rate law", "arrhenius", "decay"]):
-        m_k = re.search(r"k\s*=\s*([0-9\.\-]+)", q_low)
-        m_t12 = re.search(r"t1/2\s*=\s*([0-9\.\-]+)", q_low)
-        m_a0 = re.search(r"a0\s*=\s*([0-9\.\-]+)", q_low)
-        a0 = float(m_a0.group(1)) if m_a0 else 1.0
+            out.append(render_braille_curve(v_naoh, [(np.array(ph_curve), C_CYAN, "pH Titration (V_base mL)")], cols=54, rows=7))
+            res = "\n".join(out)
+        # 4. Chemical Kinetics
+        elif any(k in clean_q_low for k in ["kinetics", "half life", "half-life", "rate law", "arrhenius", "decay"]):
+            m_k = re.search(r"k\s*=\s*([0-9\.\-]+)", clean_q_low)
+            m_t12 = re.search(r"t1/2\s*=\s*([0-9\.\-]+)", clean_q_low)
+            m_a0 = re.search(r"a0\s*=\s*([0-9\.\-]+)", clean_q_low)
+            a0 = float(m_a0.group(1)) if m_a0 else 1.0
 
-        if m_k:
-            k_val = float(m_k.group(1))
-            t_half = math.log(2.0) / k_val
-        elif m_t12:
-            t_half = float(m_t12.group(1))
-            k_val = math.log(2.0) / t_half
+            if m_k:
+                k_val = float(m_k.group(1))
+                t_half = math.log(2.0) / k_val
+            elif m_t12:
+                t_half = float(m_t12.group(1))
+                k_val = math.log(2.0) / t_half
+            else:
+                k_val = 0.05
+                t_half = math.log(2.0) / k_val
+
+            out.append(f"{C_BOLD}{C_GREEN}⚡ CHEMICAL KINETICS (1st ORDER RATE LAW):{C_RESET}")
+            out.append(f"  {C_GRAY}Integrated Rate Law :{C_RESET} [A](t) = [A]₀ · exp(-k·t)")
+            out.append(f"  {C_AMBER}Rate Constant k     :{C_RESET} {k_val:.4e} s⁻¹")
+            out.append(f"  {C_BOLD}{C_CYAN}Half-Life t½ = ln2/k:{C_RESET} {C_BOLD}{C_WHITE}{t_half:.3f} s{C_RESET}")
+
+            t_axis = np.linspace(0.0, t_half * 4.0, 300)
+            conc_axis = a0 * np.exp(-k_val * t_axis)
+            out.append(render_braille_curve(t_axis, [(conc_axis, C_CYAN, "[A](t) Concentration M")], cols=54, rows=7))
+            res = "\n".join(out)
+        # 5. Gas Laws: PV = nRT
+        elif "pv=nrt" in clean_q_low.replace(" ", "") or ("atm" in clean_q_low and "k" in clean_q_low) or "gas law" in clean_q_low:
+            m_p = re.search(r"p\s*=\s*([0-9\.\-]+)\s*(atm|kpa|bar|pa)?", clean_q_low)
+            m_v = re.search(r"v\s*=\s*([0-9\.\-]+)\s*(l|liters|m3)?", clean_q_low)
+            m_n = re.search(r"n\s*=\s*([0-9\.\-]+)\s*(mol|moles)?", clean_q_low)
+            m_t = re.search(r"t\s*=\s*([0-9\.\-]+)\s*(k|c)?", clean_q_low)
+
+            p = float(m_p.group(1)) if m_p else None
+            v = float(m_v.group(1)) if m_v else None
+            n = float(m_n.group(1)) if m_n else None
+            t = float(m_t.group(1)) if m_t else 298.15
+            R = 0.082057
+
+            out.append(f"{C_BOLD}{C_GREEN}⚡ IDEAL GAS LAW (PV = nRT):{C_RESET}")
+            if not n and p and v and t:
+                n = (p * v) / (R * t)
+                out.append(f"  {C_BOLD}{C_CYAN}Molar Amount n = PV/RT :{C_RESET} {C_BOLD}{C_WHITE}{n:.4f} moles{C_RESET}")
+            elif not p and v and n and t:
+                p = (n * R * t) / v
+                out.append(f"  {C_BOLD}{C_CYAN}Pressure P = nRT/V     :{C_RESET} {C_BOLD}{C_WHITE}{p:.4f} atm{C_RESET}")
+            elif not v and p and n and t:
+                v = (n * R * t) / p
+                out.append(f"  {C_BOLD}{C_CYAN}Volume V = nRT/P       :{C_RESET} {C_BOLD}{C_WHITE}{v:.4f} L{C_RESET}")
+            else:
+                n = 1.0; t = 298.15
+                out.append(f"  {C_GRAY}Default Conditions:{C_RESET} n=1.0 mol, T=298.15 K")
+
+            v_range = np.linspace(1.0, 40.0, 300)
+            p_iso = (n * R * t) / v_range
+            out.append(render_braille_curve(v_range, [(p_iso, C_CYAN, "P(V) Isotherm (atm vs L)")], cols=54, rows=7))
+            res = "\n".join(out)
         else:
-            k_val = 0.05
-            t_half = math.log(2.0) / k_val
+            res = balance_chemical_equation(clean_q)
 
-        out.append(f"{C_BOLD}{C_GREEN}⚡ CHEMICAL KINETICS (1st ORDER RATE LAW):{C_RESET}")
-        out.append(f"  {C_GRAY}Integrated Rate Law :{C_RESET} [A](t) = [A]₀ · exp(-k·t)")
-        out.append(f"  {C_AMBER}Rate Constant k     :{C_RESET} {k_val:.4e} s⁻¹")
-        out.append(f"  {C_BOLD}{C_CYAN}Half-Life t½ = ln2/k:{C_RESET} {C_BOLD}{C_WHITE}{t_half:.3f} s{C_RESET}")
+    # Record in active session history
+    from host.session_manager import record_calc_in_session, get_active_session
+    record_calc_in_session("Chemistry", clean_q, res)
+    active_sess = get_active_session()
 
-        t_axis = np.linspace(0.0, t_half * 4.0, 300)
-        conc_axis = a0 * np.exp(-k_val * t_axis)
-        out.append(render_braille_curve(t_axis, [(conc_axis, C_CYAN, "[A](t) Concentration M")], cols=54, rows=7))
-        res = "\n".join(out)
-        try:
-            from host.obsidian_sync import record_session_calculation
-            record_session_calculation("Chemistry", f"Kinetics - k={k_val}", q, res, ["chemistry", "kinetics", "half_life"], ["Chemical Kinetics", "Rate Laws"])
-        except Exception:
-            pass
-        return res
+    # ONLY write to Obsidian if explicitly requested!
+    if target_vault:
+        note_p = record_session_calculation(
+            domain="Chemistry",
+            title=f"Reaction - {clean_q[:30]}",
+            query=clean_q,
+            result_text=res,
+            tags=["chemistry", "stoichiometry"],
+            related_links=["Chemistry", "Reactions"],
+            vault_name=target_vault,
+        )
+        conf = f"\n\n{C_BOLD}{C_GREEN}💾 SAVED TO OBSIDIAN VAULT [{target_vault}]:{C_RESET}\n  {C_GRAY}Session Note :{C_RESET} {C_CYAN}{note_p.name}{C_RESET}\n  {C_GRAY}Session Link :{C_RESET} [[Session - {active_sess}]]"
+        return res + conf
 
-    # 5. Gas Laws: PV = nRT
-    if "pv=nrt" in q_low.replace(" ", "") or ("atm" in q_low and "k" in q_low) or "gas law" in q_low:
-        m_p = re.search(r"p\s*=\s*([0-9\.\-]+)\s*(atm|kpa|bar|pa)?", q_low)
-        m_v = re.search(r"v\s*=\s*([0-9\.\-]+)\s*(l|liters|m3)?", q_low)
-        m_n = re.search(r"n\s*=\s*([0-9\.\-]+)\s*(mol|moles)?", q_low)
-        m_t = re.search(r"t\s*=\s*([0-9\.\-]+)\s*(k|c)?", q_low)
-
-        p = float(m_p.group(1)) if m_p else None
-        v = float(m_v.group(1)) if m_v else None
-        n = float(m_n.group(1)) if m_n else None
-        t = float(m_t.group(1)) if m_t else 298.15
-        R = 0.082057
-
-        out.append(f"{C_BOLD}{C_GREEN}⚡ IDEAL GAS LAW (PV = nRT):{C_RESET}")
-        if not n and p and v and t:
-            n = (p * v) / (R * t)
-            out.append(f"  {C_BOLD}{C_CYAN}Molar Amount n = PV/RT :{C_RESET} {C_BOLD}{C_WHITE}{n:.4f} moles{C_RESET}")
-        elif not p and v and n and t:
-            p = (n * R * t) / v
-            out.append(f"  {C_BOLD}{C_CYAN}Pressure P = nRT/V     :{C_RESET} {C_BOLD}{C_WHITE}{p:.4f} atm{C_RESET}")
-        elif not v and p and n and t:
-            v = (n * R * t) / p
-            out.append(f"  {C_BOLD}{C_CYAN}Volume V = nRT/P       :{C_RESET} {C_BOLD}{C_WHITE}{v:.4f} L{C_RESET}")
-        else:
-            n = 1.0; t = 298.15
-            out.append(f"  {C_GRAY}Default Conditions:{C_RESET} n=1.0 mol, T=298.15 K")
-
-        v_range = np.linspace(1.0, 40.0, 300)
-        p_iso = (n * R * t) / v_range
-        out.append(render_braille_curve(v_range, [(p_iso, C_CYAN, "P(V) Isotherm (atm vs L)")], cols=54, rows=7))
-        res = "\n".join(out)
-        try:
-            from host.obsidian_sync import record_session_calculation
-            record_session_calculation("Chemistry", "Ideal Gas Law - PV=nRT", q, res, ["chemistry", "gas_laws"], ["Gas Laws", "Thermodynamics"])
-        except Exception:
-            pass
-        return res
+    return res
 
     # 6. Fallback
     return balance_chemical_equation(q)

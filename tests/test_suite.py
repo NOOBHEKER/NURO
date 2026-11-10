@@ -366,19 +366,38 @@ def test_chemistry_balancer_and_numericals() -> None:
 
 
 def test_obsidian_graph_sync() -> None:
-    """Verify Obsidian vault initialization, graph.json config, and note linking."""
-    from host.obsidian_sync import open_obsidian_graph_view, VAULT_PATH
-    out = open_obsidian_graph_view()
-    assert "OBSIDIAN GRAPH VIEW" in out
-    assert VAULT_PATH.exists()
-    assert (VAULT_PATH / ".obsidian/graph.json").exists()
-    assert (VAULT_PATH / "00 - Session Hub (MOC).md").exists()
+    """Verify Obsidian vault initialization, explicit directive extraction, and session management."""
+    from host.obsidian_sync import extract_obsidian_directive, launch_obsidian_vault, resolve_vault_path
+    from host.session_manager import set_active_session, get_active_session
+
+    # Test explicit vault directive extraction
+    q_clean, vault = extract_obsidian_directive("2SO2 + O2 -> 2SO3 to obsidian Acids, Bases and Salts")
+    assert q_clean == "2SO2 + O2 -> 2SO3"
+    assert vault == "Acids, Bases and Salts"
+
+    v_path, v_name = resolve_vault_path("ICSE Class 10")
+    assert "ICSE" in v_name
+    assert v_path.exists()
+
+    # Session switching
+    set_active_session("Physics-Exam-Prep")
+    assert get_active_session() == "Physics-Exam-Prep"
+
+    out = launch_obsidian_vault()
+    assert "OBSIDIAN VAULT SYNCED" in out
 
 
 def test_physics_simulation_and_constants() -> None:
-    """Verify projectile motion, RLC ringing, relativity, Bohr quantum model, and constants."""
+    """Verify projectile motion, RLC ringing, relativity, Bohr quantum model, Pascal's law, and constants."""
     from host.phy import solve_physics, CONSTANTS
     assert "c" in CONSTANTS and abs(CONSTANTS["c"][0] - 299792458.0) < 1.0
+
+    # Pascal's Law conceptual theory & numerical solver
+    pascal = solve_physics("pascals law F1=50 A1=0.01 A2=0.5")
+    assert "PASCAL'S LAW" in pascal
+    assert "Mechanical Advantage" in pascal
+    assert "Output Lift Force F₂" in pascal
+    assert "Diameter Ratio" in pascal
 
     proj = solve_physics("projectile v=50 angle=45")
     assert "Time of Flight" in proj
