@@ -114,6 +114,16 @@ def natural_to_sympy_str(text: str) -> str:
     # Strip question starters
     s = re.sub(r"^(what is|calculate|compute|solve|eval|evaluate|graph|plot|find)\s+", "", s, flags=re.I)
 
+    # Single-key operator shorthands: m -> *, a -> +, s -> -, d -> /
+    s = re.sub(r"([0-9\)])\s*m\s*([0-9\(])", r"\1 * \2", s, flags=re.I)
+    s = re.sub(r"([0-9\)])\s*a\s*([0-9\(])", r"\1 + \2", s, flags=re.I)
+    s = re.sub(r"([0-9\)])\s*s\s*([0-9\(])", r"\1 - \2", s, flags=re.I)
+    s = re.sub(r"([0-9\)])\s*d\s*([0-9\(])", r"\1 / \2", s, flags=re.I)
+    s = re.sub(r"\b([0-9\.]+)\s+m\s+([0-9\.]+)\b", r"\1 * \2", s, flags=re.I)
+    s = re.sub(r"\b([0-9\.]+)\s+a\s+([0-9\.]+)\b", r"\1 + \2", s, flags=re.I)
+    s = re.sub(r"\b([0-9\.]+)\s+s\s+([0-9\.]+)\b", r"\1 - \2", s, flags=re.I)
+    s = re.sub(r"\b([0-9\.]+)\s+d\s+([0-9\.]+)\b", r"\1 / \2", s, flags=re.I)
+
     # Clean words
     replacements = [
         (r"\b(square root of|sqrt of|square root)\b", "sqrt"),
@@ -149,6 +159,10 @@ def calculate_and_graph(query: str, domain: Optional[Tuple[float, float]] = None
     q_clean = query.strip()
     if not q_clean:
         return ""
+
+    if q_clean.lower() in ("obsidian", "graph", "vault", "sync"):
+        from host.obsidian_sync import open_obsidian_graph_view
+        return open_obsidian_graph_view()
 
     out: List[str] = []
     x = sp.Symbol("x")
@@ -284,7 +298,85 @@ def calculate_and_graph(query: str, domain: Optional[Tuple[float, float]] = None
         xs = np.linspace(c_val - d_val, c_val + d_val, 100)
         out.append(render_braille_curve(xs, [(xs, C_CYAN, f"value={c_val:.4f}")], cols=48, rows=4))
 
-    return "\n".join(out)
+    result_str = "\n".join(out)
+    try:
+        from host.obsidian_sync import record_session_calculation
+        record_session_calculation(
+            domain="Math",
+            title=f"Math - {q_clean[:30]}",
+            query=q_clean,
+            result_text=result_str,
+            tags=["math", "calculus", "scientific_calculator"],
+            related_links=["Calculus", "Functions", "Equations"],
+        )
+    except Exception:
+        pass
+
+    return result_str
+
+
+def calc_get_line(prompt: str, shortcuts_active: bool = True) -> Tuple[str, bool]:
+    """Read a line with live single-key operator mapping:
+    - Pressing 'm' -> prints '*' and buffers '*'
+    - Pressing 'a' -> prints '+' and buffers '+'
+    - Pressing 's' -> prints '-' and buffers '-'
+    - Pressing 'd' -> prints '/' and buffers '/'
+    - Tab or Ctrl+T toggles between [Shortcuts (m=* a=+ s=- d=/)] and [Alpha Mode]
+    """
+    if os.name != "nt":
+        try:
+            return input(prompt), shortcuts_active
+        except Exception:
+            return "", shortcuts_active
+
+    import msvcrt
+    sys.stdout.write(prompt)
+    sys.stdout.flush()
+    buf: List[str] = []
+    mode = shortcuts_active
+
+    while True:
+        try:
+            ch = msvcrt.getwch()
+        except (KeyboardInterrupt, EOFError):
+            raise KeyboardInterrupt
+
+        if ch == "\r":  # Enter
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+            return "".join(buf), mode
+        elif ch == "\x03":  # Ctrl+C
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+            raise KeyboardInterrupt
+        elif ch in ("\t", "\x14"):  # Tab or Ctrl+T -> Toggle Mode
+            mode = not mode
+            # Brief visual feedback on right, then reset
+            tag = f" {C_AMBER}[m=* a=+ s=- d=/]{C_RESET}" if mode else f" {C_GRAY}[ALPHA]{C_RESET}"
+            sys.stdout.write("\r\033[K" + prompt + "".join(buf) + tag)
+            sys.stdout.flush()
+            sys.stdout.write("\r\033[K" + prompt + "".join(buf))
+            sys.stdout.flush()
+        elif ch == "\x08":  # Backspace
+            if buf:
+                buf.pop()
+                sys.stdout.write("\b \b")
+                sys.stdout.flush()
+        elif ch in ("\x00", "\xe0"):
+            msvcrt.getwch()  # skip arrow/function extension code
+        else:
+            if mode:
+                if ch in ("m", "M"):
+                    ch = "*"
+                elif ch in ("a", "A"):
+                    ch = "+"
+                elif ch in ("s", "S"):
+                    ch = "-"
+                elif ch in ("d", "D"):
+                    ch = "/"
+            buf.append(ch)
+            sys.stdout.write(ch)
+            sys.stdout.flush()
 
 
 def run_calc_repl() -> None:
@@ -294,12 +386,15 @@ def run_calc_repl() -> None:
     print(f"\n{C_BOLD}{C_CYAN}╔═══════════════════════════════════════════════════════════════╗{C_RESET}")
     print(f"{C_BOLD}{C_CYAN}║     ⚡ nuro-calc — Interactive Scientific Graphing Shell      ║{C_RESET}")
     print(f"{C_BOLD}{C_CYAN}╚═══════════════════════════════════════════════════════════════╝{C_RESET}")
-    print(f"{C_GRAY}Commands:{C_RESET} Type any formula, equation, or question ('exit' to quit)")
-    print(f"{C_GRAY}Examples:{C_RESET} {C_AMBER}sqrt of 144 / 3{C_RESET}  │  {C_CYAN}sin(x) + cos(2*x){C_RESET}  │  {C_GREEN}diff x^3 - 4*x{C_RESET}  │  {C_PURPLE}x^2 - 4 = 0{C_RESET}\n")
+    print(f"{C_GRAY}Shortcuts Active:{C_RESET} {C_GREEN}m = *{C_RESET} │ {C_CYAN}a = +{C_RESET} │ {C_AMBER}s = -{C_RESET} │ {C_PURPLE}d = /{C_RESET}  ({C_WHITE}Tab / Ctrl+T{C_RESET} toggles Alpha mode)")
+    print(f"{C_GRAY}Commands:{C_RESET} Type formula, 'obsidian' (open graph view), or 'q' to quit")
+    print(f"{C_GRAY}Examples:{C_RESET} {C_AMBER}5m3a10{C_RESET} (5*3+10) │ {C_CYAN}sin(x)a2{C_RESET} │ {C_PURPLE}x^2 s 4 = 0{C_RESET} │ {C_GREEN}obsidian{C_RESET}\n")
 
+    shortcuts_mode = True
     while True:
         try:
-            raw = input(f"{C_BOLD}{C_GREEN}nuro-calc>{C_RESET} ").strip()
+            raw, shortcuts_mode = calc_get_line(f"{C_BOLD}{C_GREEN}nuro-calc>{C_RESET} ", shortcuts_active=shortcuts_mode)
+            raw = raw.strip()
             if not raw:
                 continue
             if raw.lower() in ("exit", "quit", "q"):

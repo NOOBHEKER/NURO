@@ -445,43 +445,48 @@ def solve_physics(query: str) -> str:
     if not q:
         return format_constants_table()
 
+    if q_low in ("obsidian", "graph", "vault", "sync"):
+        from host.obsidian_sync import open_obsidian_graph_view
+        return open_obsidian_graph_view()
+
     # 1. Constants
     if q_low in ("const", "constants", "constant") or q_low.startswith(("constant ", "const ")):
         token = q_low.split()[-1] if len(q_low.split()) > 1 else None
-        return format_constants_table(token)
+        res = format_constants_table(token)
+    elif any(k in q_low for k in ["projectile", "ballistics", "trajectory", "launch", "angle="]):
+        res = solve_projectile(q)
+    elif any(k in q_low for k in ["oscillator", "damping", "resonance", "harmonic", "spring", "damping ratio"]):
+        res = solve_oscillator(q)
+    elif any(k in q_low for k in ["rlc", "circuit", "inductor", "capacitor", "impedance", "transient"]):
+        res = solve_rlc(q)
+    elif any(k in q_low for k in ["relativity", "lorentz", "gamma", "dilation", "contraction", "einstein"]) or ("0." in q_low and "c" in q_low):
+        res = solve_relativity(q)
+    elif any(k in q_low for k in ["bohr", "quantum", "photoelectric", "blackbody", "de broglie", "planck", "photon", "hydrogen"]):
+        res = solve_quantum(q)
+    elif any(k in q_low for k in ["orbit", "kepler", "satellite", "escape velocity", "gravitation"]):
+        res = solve_orbital(q)
+    elif "v=" in q_low or "speed=" in q_low:
+        res = solve_projectile(q)
+    elif "r=" in q_low and "l=" in q_low:
+        res = solve_rlc(q)
+    else:
+        res = format_constants_table(q)
 
-    # 2. Projectile / Ballistics
-    if any(k in q_low for k in ["projectile", "ballistics", "trajectory", "launch", "angle="]):
-        return solve_projectile(q)
+    # Sync to Obsidian
+    try:
+        from host.obsidian_sync import record_session_calculation
+        record_session_calculation(
+            domain="Physics",
+            title=f"Physics - {q[:30]}",
+            query=q,
+            result_text=res,
+            tags=["physics", "simulation"],
+            related_links=["Mechanics", "Electromagnetism", "Relativity", "Quantum Mechanics"],
+        )
+    except Exception:
+        pass
 
-    # 3. Oscillations & Resonance
-    if any(k in q_low for k in ["oscillator", "damping", "resonance", "harmonic", "spring", "damping ratio"]):
-        return solve_oscillator(q)
-
-    # 4. Circuits & RLC
-    if any(k in q_low for k in ["rlc", "circuit", "inductor", "capacitor", "impedance", "transient"]):
-        return solve_rlc(q)
-
-    # 5. Relativity
-    if any(k in q_low for k in ["relativity", "lorentz", "gamma", "dilation", "contraction", "einstein"]) or ("0." in q_low and "c" in q_low):
-        return solve_relativity(q)
-
-    # 6. Quantum / Modern Physics
-    if any(k in q_low for k in ["bohr", "quantum", "photoelectric", "blackbody", "de broglie", "planck", "photon", "hydrogen"]):
-        return solve_quantum(q)
-
-    # 7. Orbit / Gravity
-    if any(k in q_low for k in ["orbit", "kepler", "satellite", "escape velocity", "gravitation"]):
-        return solve_orbital(q)
-
-    # Fallback heuristic: check if query looks like projectile or circuit
-    if "v=" in q_low or "speed=" in q_low:
-        return solve_projectile(q)
-    if "r=" in q_low and "l=" in q_low:
-        return solve_rlc(q)
-
-    # Default to constants table with filter
-    return format_constants_table(q)
+    return res
 
 
 def run_phy_repl() -> None:

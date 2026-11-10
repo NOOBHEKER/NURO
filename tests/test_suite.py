@@ -331,12 +331,27 @@ def test_scientific_calculator_and_graph() -> None:
     res3 = calculate_and_graph("x^2 - 4*x - 5 = 0")
     assert "SOLUTIONS FOR x" in res3
 
+    # Single-key operator shorthand: m=*, a=+, s=-, d=/
+    res4 = calculate_and_graph("5 m 3 a 10")
+    assert "25" in res4
+    res5 = calculate_and_graph("100 d 4 s 5")
+    assert "20" in res5
+
 
 def test_chemistry_balancer_and_numericals() -> None:
-    """Verify chemical equation balancing, molar mass, and pH/kinetics solvers."""
+    """Verify chemical equation balancing, catalyst c support, molar mass, and pH/kinetics solvers."""
     from host.chem import balance_chemical_equation, compute_molar_mass, solve_chem_numerical
     balanced = balance_chemical_equation("KMnO4 + HCl -> KCl + MnCl2 + H2O + Cl2")
     assert "2KMnO4 + 16HCl ➔ 2KCl + 2MnCl2 + 8H2O + 5Cl2" in balanced
+    assert "Potassium Permanganate" in balanced
+    assert "Hydrochloric Acid" in balanced
+
+    # Catalyst c support + Activation energy curve
+    cat_res = balance_chemical_equation("2SO2 + O2 -> 2SO3 [c=V2O5]")
+    assert "2SO2 + O2 ──[V2O5]──➔ 2SO3" in cat_res
+    assert "CATALYST ACTIVE" in cat_res
+    assert "Vanadium(V) Oxide" in cat_res
+    assert "Uncatalyzed Path" in cat_res
 
     mass, pcts = compute_molar_mass("CuSO4*5H2O")
     assert abs(mass - 249.677) < 0.1
@@ -348,6 +363,16 @@ def test_chemistry_balancer_and_numericals() -> None:
 
     kin_res = solve_chem_numerical("kinetics k=0.08")
     assert "Half-Life" in kin_res
+
+
+def test_obsidian_graph_sync() -> None:
+    """Verify Obsidian vault initialization, graph.json config, and note linking."""
+    from host.obsidian_sync import open_obsidian_graph_view, VAULT_PATH
+    out = open_obsidian_graph_view()
+    assert "OBSIDIAN GRAPH VIEW" in out
+    assert VAULT_PATH.exists()
+    assert (VAULT_PATH / ".obsidian/graph.json").exists()
+    assert (VAULT_PATH / "00 - Session Hub (MOC).md").exists()
 
 
 def test_physics_simulation_and_constants() -> None:

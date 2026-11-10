@@ -66,6 +66,10 @@ def main() -> None:
     p_phy = sub.add_parser("phy", help="Over-the-Top Physics Engine (Mechanics, RLC, Relativity, Quantum)")
     p_phy.add_argument("query", nargs="*", help="Optional physics query (e.g. 'projectile v=50 angle=45')")
 
+    # nuro obsidian / graph (Open Obsidian Color-Coded Graph View of Session Calculations)
+    sub.add_parser("obsidian", help="Sync & launch Obsidian interactive Color-Coded Graph View")
+    sub.add_parser("graph", help="Sync & launch Obsidian interactive Color-Coded Graph View")
+
     # nuro solve / math
     p_solve = sub.add_parser("solve", help="Natural-language formula solver with Unicode graph")
     p_solve.add_argument("query", nargs="+", help="Formula or question (e.g. 'sqrt of 16 times pi', 'sin(x)*exp(-x/5)')")
@@ -76,7 +80,11 @@ def main() -> None:
     if not args.command and unknown:
         q_raw = " ".join(unknown)
         q_low = q_raw.lower()
-        if "->" in q_raw or "➔" in q_raw or any(w in q_low for w in ["molar mass", "titration", "kinetics", "kmno4"]):
+        if "obsidian" in q_low or "graph" in q_low or "vault" in q_low:
+            from host.obsidian_sync import open_obsidian_graph_view
+            print(open_obsidian_graph_view())
+            return
+        elif "->" in q_raw or "➔" in q_raw or any(w in q_low for w in ["molar mass", "titration", "kinetics", "kmno4"]):
             from host.chem import solve_chem_numerical
             print(solve_chem_numerical(q_raw))
             return
@@ -172,6 +180,10 @@ def main() -> None:
             print(solve_physics(" ".join(q_list)))
         else:
             run_phy_repl()
+
+    elif cmd in ("obsidian", "graph"):
+        from host.obsidian_sync import open_obsidian_graph_view
+        print(open_obsidian_graph_view())
 
     elif cmd == "solve":
         from host.calc import calculate_and_graph
