@@ -216,6 +216,23 @@ def calculate_and_graph(query: str, domain: Optional[Tuple[float, float]] = None
     if q_clean_low in ("obsidian", "graph", "vault", "sync"):
         return launch_obsidian_vault(target_vault)
 
+    # Live Animated Graphs: "tui", "live", "animated", "oscilloscope", "live graph", "animated graph"
+    if q_clean_low in ("tui", "live", "animated", "oscilloscope", "stream", "graph live", "live graph", "animated graph"):
+        from host.dash.tui import run_tui
+        try:
+            run_tui(port="COM6")
+            return f"\n{C_BOLD}{C_GREEN}⚡ [TUI CLOSED]: Returned to nuro interactive shell.{C_RESET}"
+        except Exception as e:
+            return f"{C_AMBER}[TUI ERROR]: {e}{C_RESET}"
+
+    if q_clean_low in ("gui", "cockpit", "window"):
+        from host.dash.app import run_live_interactive_cockpit
+        try:
+            run_live_interactive_cockpit(port="COM6")
+            return f"\n{C_BOLD}{C_GREEN}⚡ [GUI CLOSED]: Returned to nuro interactive shell.{C_RESET}"
+        except Exception as e:
+            return f"{C_AMBER}[GUI ERROR]: {e}{C_RESET}"
+
     # 0. Direct AI / LLM Query trigger: e.g. "ai explain quadratic formula" or "ask ..."
     if q_clean_low.startswith(("ai ", "ask ", "llm ", "explain ")):
         prompt_text = re.sub(r"^(ai|ask|llm|explain)\s+", "", q_clean, flags=re.I).strip()
@@ -517,7 +534,7 @@ def run_calc_repl() -> None:
     print(f"  {C_CYAN}Math     :{C_RESET} quad 1 -5 6 │ 5*3 + 10 │ x^2 - 5x + 6 = 0 │ diff sin(x) │ integrate x^2")
     print(f"  {C_AMBER}Physics  :{C_RESET} pascal 50 0.01 0.5 │ projectile v=50 angle=45 │ rlc R=5 L=50 C=100")
     print(f"  {C_GREEN}Chemistry:{C_RESET} mass C6H12O6 │ KMnO4 + HCl -> KCl + MnCl2 + H2O + Cl2 │ ph 0.01")
-    print(f"  {C_PURPLE}Neural   :{C_RESET} burst (trigger test) │ neuro (telemetry) │ sim rest (ESP32-S3 hardware on COM6)")
+    print(f"  {C_PURPLE}Neural   :{C_RESET} live / tui (animated 60 FPS graph) │ burst (trigger test) │ neuro (telemetry)")
     print(f"  {C_WHITE}Obsidian :{C_RESET} session switch <name> │ to obsidian [vault] │ obsidian\n")
 
     while True:

@@ -71,6 +71,10 @@ def main() -> None:
     p_web.add_argument("--serial-port", default="COM6", help="ESP32-S3 serial port (default: COM6)")
     p_web.add_argument("--no-browser", action="store_true", help="Don't auto-open browser")
 
+    # nuro gui
+    p_gui = sub.add_parser("gui", help="Launch live animated 4-panel interactive graphical window")
+    p_gui.add_argument("--port", default="COM6", help="Serial port (default: COM6)")
+
     # nuro bench
     p_bench = sub.add_parser("bench", help="Run 1000-frame live hardware benchmark on COM6")
     p_bench.add_argument("--frames", default=1000, type=int, help="Frame count (default: 1000)")
@@ -168,6 +172,11 @@ def main() -> None:
             threading.Thread(target=open_tab, daemon=True).start()
 
         run_web_cockpit(port=web_port, serial_port=ser_port)
+
+    elif cmd == "gui":
+        from host.dash.app import run_live_interactive_cockpit
+        port = getattr(args, "port", "COM6")
+        run_live_interactive_cockpit(port=port)
 
     elif cmd == "bench":
         from host.hil.transport import run_hil_benchmark
