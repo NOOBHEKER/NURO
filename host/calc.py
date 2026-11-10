@@ -8,6 +8,7 @@ Features:
 - Multi-function overlay plotting (e.g., 'sin(x), cos(x)')
 - Interactive REPL shell (type 'nuro calc') or single-command CLI (e.g. 'nuro calc "x^3 - 3*x"')
 """
+
 from __future__ import annotations
 
 import math
@@ -103,14 +104,21 @@ def render_braille_curve(
         out_lines.append(f"│ {C_GRAY}{tag}{C_RESET} \033[38;5;75m{chars}\033[0m │")
 
     out_lines.append(f"│          └" + "─" * cols + " │")
-    out_lines.append(f"│           {C_GRAY}{xs[0]:<8.2f}" + " " * max(1, cols - 19) + f"{xs[-1]:>8.2f}{C_RESET} │")
+    out_lines.append(
+        f"│           {C_GRAY}{xs[0]:<8.2f}"
+        + " " * max(1, cols - 19)
+        + f"{xs[-1]:>8.2f}{C_RESET} │"
+    )
     out_lines.append("╰" + "─" * (cols + 14) + "╯")
     return "\n".join(out_lines)
 
 
-def render_neuro_graph_panel(env: int, phase_deg: float, spikes: int, budget: int, is_burst: bool = False) -> str:
+def render_neuro_graph_panel(
+    env: int, phase_deg: float, spikes: int, budget: int, is_burst: bool = False
+) -> str:
     """Render high-resolution Unicode Braille oscilloscope, polar phase wheel, and SNN raster."""
     from host.dash.tui import render_phase_compass
+
     out: List[str] = []
 
     # 1. Generate 150 ms 20Hz LFP Waveform & Envelope matching ESP32 telemetry
@@ -120,12 +128,23 @@ def render_neuro_graph_panel(env: int, phase_deg: float, spikes: int, budget: in
     lfp = amp * np.sin(2.0 * np.pi * 20.0 * t + phi_rad)
     env_curve = np.full_like(t, amp)
 
-    out.append(f"\n{C_BOLD}{C_GREEN}⚡ REAL-TIME LFP OSCILLOSCOPE & ENVELOPE (20 Hz BETA):{C_RESET}")
-    out.append(render_braille_curve(t * 1000.0, [(lfp, C_CYAN, "LFP raw"), (env_curve, C_AMBER, f"Env={amp:.0f}")], cols=56, rows=4))
+    out.append(
+        f"\n{C_BOLD}{C_GREEN}⚡ REAL-TIME LFP OSCILLOSCOPE & ENVELOPE (20 Hz BETA):{C_RESET}"
+    )
+    out.append(
+        render_braille_curve(
+            t * 1000.0,
+            [(lfp, C_CYAN, "LFP raw"), (env_curve, C_AMBER, f"Env={amp:.0f}")],
+            cols=56,
+            rows=4,
+        )
+    )
 
     # 2. Polar Phase Compass (θ vs Target φ* = -π)
     compass_lines = render_phase_compass(phi_rad, 0.88 if is_burst else 0.40, is_burst)
-    out.append(f"\n{C_BOLD}{C_CYAN}🧭 POLAR PHASE WHEEL & TROUGH STIMULUS TARGET (φ* = -π / ±180°):{C_RESET}")
+    out.append(
+        f"\n{C_BOLD}{C_CYAN}🧭 POLAR PHASE WHEEL & TROUGH STIMULUS TARGET (φ* = -π / ±180°):{C_RESET}"
+    )
     for cl in compass_lines:
         out.append(f"  {cl}")
 
@@ -133,22 +152,36 @@ def render_neuro_graph_panel(env: int, phase_deg: float, spikes: int, budget: in
     n_active = min(64, max(4, int(spikes * 8 + (amp / 1000.0) * 32)))
     bars_active = n_active // 2
     raster_bar = f"{C_GREEN}{'█' * bars_active}{C_RESET}{C_GRAY}{'░' * (32 - bars_active)}{C_RESET}"
-    out.append(f"\n{C_BOLD}{C_PURPLE}🧠 64-NEURON INT8 LIF SNN POPULATION RASTER:{C_RESET}")
-    out.append(f"  [{raster_bar}]  Active: {n_active}/64 Neurons | Hidden Spikes: {spikes}/8")
+    out.append(
+        f"\n{C_BOLD}{C_PURPLE}🧠 64-NEURON INT8 LIF SNN POPULATION RASTER:{C_RESET}"
+    )
+    out.append(
+        f"  [{raster_bar}]  Active: {n_active}/64 Neurons | Hidden Spikes: {spikes}/8"
+    )
 
     # 4. If Burst: append Desynchronization Collapse Curve R(t)
     if is_burst:
-        out.append(f"\n{C_BOLD}{C_RED}⚡ CLOSED-LOOP DESYNCHRONIZATION COLLAPSE (Kuramoto Order Parameter R(t)):{C_RESET}")
+        out.append(
+            f"\n{C_BOLD}{C_RED}⚡ CLOSED-LOOP DESYNCHRONIZATION COLLAPSE (Kuramoto Order Parameter R(t)):{C_RESET}"
+        )
         t_coll = np.linspace(0.0, 100.0, 100)
         # R drops from 0.88 down to 0.22 after stimulus pulse
         r_curve = 0.22 + (0.88 - 0.22) / (1.0 + np.exp((t_coll - 35.0) / 8.0))
-        out.append(render_braille_curve(t_coll, [(r_curve, C_RED, "Synchrony R(t)")], cols=56, rows=4))
-        out.append(f"  {C_GRAY}Stimulus Pulse Delivered @ t=35ms: Synchrony R collapsed from 0.88 ➔ 0.22 (Suppression Success){C_RESET}")
+        out.append(
+            render_braille_curve(
+                t_coll, [(r_curve, C_RED, "Synchrony R(t)")], cols=56, rows=4
+            )
+        )
+        out.append(
+            f"  {C_GRAY}Stimulus Pulse Delivered @ t=35ms: Synchrony R collapsed from 0.88 ➔ 0.22 (Suppression Success){C_RESET}"
+        )
 
     return "\n".join(out)
 
 
-SUB_DIGITS = str.maketrans("0123456789+-=()aehijklmnoprstuvx", "₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₐₑₕᵢⱼₖₗₘₙₒₚᵣₛₜᵤᵥₓ")
+SUB_DIGITS = str.maketrans(
+    "0123456789+-=()aehijklmnoprstuvx", "₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₐₑₕᵢⱼₖₗₘₙₒₚᵣₛₜᵤᵥₓ"
+)
 SUP_DIGITS = str.maketrans("0123456789+-=()in", "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁱⁿ")
 
 
@@ -171,12 +204,24 @@ def clean_math_signs(text: str) -> str:
 
     # 3. Fractions: \frac{a}{b} -> (a) / (b)
     for _ in range(3):
-        s = re.sub(r"\\d?frac\{((?:[^{}]|\{[^{}]*\})*)\}\{((?:[^{}]|\{[^{}]*\})*)\}", r"(\1) / (\2)", s)
+        s = re.sub(
+            r"\\d?frac\{((?:[^{}]|\{[^{}]*\})*)\}\{((?:[^{}]|\{[^{}]*\})*)\}",
+            r"(\1) / (\2)",
+            s,
+        )
 
     # 4. Square roots: \sqrt{33} -> √33, sqrt(33) -> √33
-    s = re.sub(r"\\sqrt\{([^}]+)\}", lambda m: f"√{m.group(1)}" if len(m.group(1)) <= 4 else f"√({m.group(1)})", s)
+    s = re.sub(
+        r"\\sqrt\{([^}]+)\}",
+        lambda m: f"√{m.group(1)}" if len(m.group(1)) <= 4 else f"√({m.group(1)})",
+        s,
+    )
     s = re.sub(r"\\sqrt\s*([0-9a-zA-Z]+)", r"√\1", s)
-    s = re.sub(r"\bsqrt\(([^)]+)\)", lambda m: f"√{m.group(1)}" if len(m.group(1)) <= 4 else f"√({m.group(1)})", s)
+    s = re.sub(
+        r"\bsqrt\(([^)]+)\)",
+        lambda m: f"√{m.group(1)}" if len(m.group(1)) <= 4 else f"√({m.group(1)})",
+        s,
+    )
     s = re.sub(r"\bsqrt\b", "√", s)
 
     # 5. Subscripts: x_2 -> x₂, x_{12} -> x₁₂
@@ -184,6 +229,7 @@ def clean_math_signs(text: str) -> str:
         base = m.group(1)
         sub = m.group(2).translate(SUB_DIGITS)
         return f"{base}{sub}"
+
     s = re.sub(r"([a-zA-Z])_\{?([0-9]+)\}?", sub_repl, s)
 
     # 6. Superscripts: x^2 -> x², x**2 -> x²
@@ -245,7 +291,12 @@ def natural_to_sympy_str(text: str) -> str:
     """Convert natural words ('sqrt of x', 'divided by', 'squared', etc.) to SymPy syntax."""
     s = text.strip()
     # Strip question starters
-    s = re.sub(r"^(what is|calculate|compute|solve|eval|evaluate|graph|plot|find)\s+", "", s, flags=re.I)
+    s = re.sub(
+        r"^(what is|calculate|compute|solve|eval|evaluate|graph|plot|find)\s+",
+        "",
+        s,
+        flags=re.I,
+    )
 
     # Clean words (normal signs only: *, +, -, /, **)
     replacements = [
@@ -266,7 +317,23 @@ def natural_to_sympy_str(text: str) -> str:
         s = re.sub(pattern, repl, s, flags=re.I)
 
     # Replace function words without parentheses: e.g. "sqrt 25" -> "sqrt(25)"
-    funcs = ["sqrt", "cbrt", "sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh", "exp", "log", "ln", "abs"]
+    funcs = [
+        "sqrt",
+        "cbrt",
+        "sin",
+        "cos",
+        "tan",
+        "asin",
+        "acos",
+        "atan",
+        "sinh",
+        "cosh",
+        "tanh",
+        "exp",
+        "log",
+        "ln",
+        "abs",
+    ]
     for f in funcs:
         s = re.sub(rf"\b{f}\s+([0-9\.]+|[a-zA-Z]+)", rf"{f}(\1)", s, flags=re.I)
         if f == "ln":
@@ -291,55 +358,81 @@ def natural_to_sympy_str(text: str) -> str:
     return s
 
 
-def calculate_and_graph(query: str, domain: Optional[Tuple[float, float]] = None) -> str:
+def calculate_and_graph(
+    query: str, domain: Optional[Tuple[float, float]] = None
+) -> str:
     """Primary Scientific Graphing Calculator engine."""
     q_raw = query.strip()
     if not q_raw:
         return ""
 
-    from host.obsidian_sync import extract_obsidian_directive, record_session_calculation, launch_obsidian_vault
+    from host.obsidian_sync import (
+        extract_obsidian_directive,
+        record_session_calculation,
+        launch_obsidian_vault,
+    )
+
     q_clean, target_vault = extract_obsidian_directive(q_raw)
     q_clean_low = q_clean.lower()
 
     # Session switching inside calc
     if q_clean_low.startswith("session"):
         from host.cli import handle_session_command
+
         return handle_session_command(q_clean.split()[1:])
 
     if q_clean_low in ("obsidian", "graph", "vault", "sync"):
         return launch_obsidian_vault(target_vault)
 
     # Live Animated Graphs: "tui", "live", "animated", "oscilloscope", "live graph", "animated graph"
-    if q_clean_low in ("tui", "live", "animated", "oscilloscope", "stream", "graph live", "live graph", "animated graph"):
+    if q_clean_low in (
+        "tui",
+        "live",
+        "animated",
+        "oscilloscope",
+        "stream",
+        "graph live",
+        "live graph",
+        "animated graph",
+    ):
+        from host.board import resolve_port
         from host.dash.tui import run_tui
+
         try:
-            run_tui(port="COM6")
+            run_tui(port=resolve_port())
             return f"\n{C_BOLD}{C_GREEN}⚡ [TUI CLOSED]: Returned to nuro interactive shell.{C_RESET}"
         except Exception as e:
             return f"{C_AMBER}[TUI ERROR]: {e}{C_RESET}"
 
     if q_clean_low in ("gui", "cockpit", "window"):
+        from host.board import resolve_port
         from host.dash.app import run_live_interactive_cockpit
+
         try:
-            run_live_interactive_cockpit(port="COM6")
+            run_live_interactive_cockpit(port=resolve_port())
             return f"\n{C_BOLD}{C_GREEN}⚡ [GUI CLOSED]: Returned to nuro interactive shell.{C_RESET}"
         except Exception as e:
             return f"{C_AMBER}[GUI ERROR]: {e}{C_RESET}"
 
     # 0. Direct AI / LLM Query trigger: e.g. "ai explain quadratic formula" or "ask ..."
     if q_clean_low.startswith(("ai ", "ask ", "llm ", "explain ")):
-        prompt_text = re.sub(r"^(ai|ask|llm|explain)\s+", "", q_clean, flags=re.I).strip()
+        prompt_text = re.sub(
+            r"^(ai|ask|llm|explain)\s+", "", q_clean, flags=re.I
+        ).strip()
         from host.ai import query_gemini
+
         return query_gemini(prompt_text)
 
     # Direct quadratic command: "quad 1 -5 6"
-    m_quad = re.match(r"^quad\s+([0-9\.\-]+)[,\s]+([0-9\.\-]+)[,\s]+([0-9\.\-]+)", q_clean, flags=re.I)
+    m_quad = re.match(
+        r"^quad\s+([0-9\.\-]+)[,\s]+([0-9\.\-]+)[,\s]+([0-9\.\-]+)", q_clean, flags=re.I
+    )
     if m_quad:
         a_v, b_v, c_v = m_quad.group(1), m_quad.group(2), m_quad.group(3)
         q_clean = f"{a_v}*x^2 + ({b_v})*x + ({c_v}) = 0"
         q_clean_low = q_clean.lower()
 
-    # Neural & Hardware direct queries on COM6: neuro, sim burst, sim rest, status, neural burst, etc.
+    # Neural & Hardware direct queries: neuro, sim burst, sim rest, status, neural burst, etc.
     hw_target = None
     q_hw = re.sub(r"^nuro\s+", "", q_clean_low).strip()
     if any(k in q_hw for k in ["burst", "seizure", "epilep", "stim"]):
@@ -352,49 +445,106 @@ def calculate_and_graph(query: str, domain: Optional[Tuple[float, float]] = None
         hw_target = "status"
 
     if hw_target:
+        from host.board import resolve_port
+
+        hw_port = resolve_port()
         try:
             import serial
             import time
-            with serial.Serial("COM6", 2000000, timeout=1.5) as ser:
+
+            with serial.Serial(hw_port, 2000000, timeout=1.5) as ser:
                 time.sleep(0.05)
                 ser.reset_input_buffer()
                 ser.write(f"{hw_target}\r\n".encode("ascii"))
                 time.sleep(0.4)
                 resp = ser.read_all().decode("utf-8", errors="replace")
-                lines = [l for l in resp.splitlines() if not l.strip().startswith("esp32-s3>")]
+                lines = [
+                    l
+                    for l in resp.splitlines()
+                    if not l.strip().startswith("esp32-s3>")
+                ]
                 raw_text = "\n".join(lines).strip()
 
                 if hw_target in ("neuro", "sim burst"):
-                    m_env = re.search(r"Instantaneous Envelope\s*:\s*([0-9\-]+)", raw_text)
-                    m_phase = re.search(r"Compensated Phase Angle\s*:\s*([0-9\.\-\+]+)°", raw_text)
-                    m_spk = re.search(r"LIF Hidden Spike Count\s*:\s*([0-9]+)", raw_text)
-                    m_bud = re.search(r"Stimulus Budget Consumed\s*:\s*([0-9]+)", raw_text)
+                    m_env = re.search(
+                        r"Instantaneous Envelope\s*:\s*([0-9\-]+)", raw_text
+                    )
+                    m_phase = re.search(
+                        r"Compensated Phase Angle\s*:\s*([0-9\.\-\+]+)°", raw_text
+                    )
+                    m_spk = re.search(
+                        r"LIF Hidden Spike Count\s*:\s*([0-9]+)", raw_text
+                    )
+                    m_bud = re.search(
+                        r"Stimulus Budget Consumed\s*:\s*([0-9]+)", raw_text
+                    )
 
-                    env_val = int(m_env.group(1)) if m_env else (720 if hw_target == "sim burst" else 240)
-                    phase_val = float(m_phase.group(1)) if m_phase else (-175.0 if hw_target == "sim burst" else 8.4)
-                    spk_val = int(m_spk.group(1)) if m_spk else (6 if hw_target == "sim burst" else 0)
+                    env_val = (
+                        int(m_env.group(1))
+                        if m_env
+                        else (720 if hw_target == "sim burst" else 240)
+                    )
+                    phase_val = (
+                        float(m_phase.group(1))
+                        if m_phase
+                        else (-175.0 if hw_target == "sim burst" else 8.4)
+                    )
+                    spk_val = (
+                        int(m_spk.group(1))
+                        if m_spk
+                        else (6 if hw_target == "sim burst" else 0)
+                    )
                     bud_val = int(m_bud.group(1)) if m_bud else 1
 
-                    graph_panel = render_neuro_graph_panel(env_val, phase_val, spk_val, bud_val, is_burst=(hw_target == "sim burst"))
+                    graph_panel = render_neuro_graph_panel(
+                        env_val,
+                        phase_val,
+                        spk_val,
+                        bud_val,
+                        is_burst=(hw_target == "sim burst"),
+                    )
                     return f"{raw_text}\n{graph_panel}"
 
                 return raw_text
         except Exception as e:
-            return f"{C_AMBER}[COM6 HARDWARE]: Could not communicate with ESP32-S3: {e}{C_RESET}"
+            return f"{C_AMBER}[{hw_port} HARDWARE]: Could not communicate with ESP32-S3: {e}{C_RESET}"
 
     # Chemistry queries inside calc: mass, chemical formulas with ->, pH
-    if q_clean_low.startswith("mass ") or "->" in q_clean or "➔" in q_clean or any(k in q_clean_low for k in ["titration", "molar mass", "kinetics", "ph "]):
+    if (
+        q_clean_low.startswith("mass ")
+        or "->" in q_clean
+        or "➔" in q_clean
+        or any(k in q_clean_low for k in ["titration", "molar mass", "kinetics", "ph "])
+    ):
         from host.chem import solve_chem_numerical
+
         return solve_chem_numerical(q_clean)
 
     # Physics queries inside calc: pascal, projectile, rlc, relativity, bohr
-    if any(k in q_clean_low for k in ["pascal", "hydraulic", "projectile", "proj ", "rlc", "relativity", "bohr"]):
+    if any(
+        k in q_clean_low
+        for k in [
+            "pascal",
+            "hydraulic",
+            "projectile",
+            "proj ",
+            "rlc",
+            "relativity",
+            "bohr",
+        ]
+    ):
         from host.phy import solve_physics
+
         return solve_physics(q_clean)
 
     # Auto-normalize "solve quadratic ...", "quadratic ..." to an equation
     if "quadratic" in q_clean_low and "=" not in q_clean:
-        q_clean = re.sub(r"^(solve quadratic equation|solve quadratic|quadratic equation|quadratic)\s+", "", q_clean, flags=re.I).strip()
+        q_clean = re.sub(
+            r"^(solve quadratic equation|solve quadratic|quadratic equation|quadratic)\s+",
+            "",
+            q_clean,
+            flags=re.I,
+        ).strip()
         if "=" not in q_clean:
             q_clean = f"{q_clean} = 0"
 
@@ -420,9 +570,15 @@ def calculate_and_graph(query: str, domain: Optional[Tuple[float, float]] = None
                     coeffs = poly.all_coeffs()
                     a_val, b_val, c_val = coeffs[0], coeffs[1], coeffs[2]
                     disc = b_val**2 - 4 * a_val * c_val
-                    out.append(f"{C_BOLD}{C_GREEN}⚡ QUADRATIC EQUATION SOLVER:{C_RESET} {C_WHITE}{a_val}·{var_x}² + ({b_val})·{var_x} + ({c_val}) = 0{C_RESET}")
-                    out.append(f"  {C_GRAY}Coefficients          :{C_RESET} a = {a_val}, b = {b_val}, c = {c_val}")
-                    out.append(f"  {C_AMBER}Discriminant Δ=b²-4ac  :{C_RESET} {C_BOLD}{C_CYAN}{disc}{C_RESET} ({float(disc.evalf()):.4f})")
+                    out.append(
+                        f"{C_BOLD}{C_GREEN}⚡ QUADRATIC EQUATION SOLVER:{C_RESET} {C_WHITE}{a_val}·{var_x}² + ({b_val})·{var_x} + ({c_val}) = 0{C_RESET}"
+                    )
+                    out.append(
+                        f"  {C_GRAY}Coefficients          :{C_RESET} a = {a_val}, b = {b_val}, c = {c_val}"
+                    )
+                    out.append(
+                        f"  {C_AMBER}Discriminant Δ=b²-4ac  :{C_RESET} {C_BOLD}{C_CYAN}{disc}{C_RESET} ({float(disc.evalf()):.4f})"
+                    )
                     if disc > 0:
                         nature = "Two Distinct Real Roots"
                     elif disc == 0:
@@ -430,7 +586,9 @@ def calculate_and_graph(query: str, domain: Optional[Tuple[float, float]] = None
                     else:
                         nature = "Two Complex Conjugate Roots"
                     out.append(f"  {C_GRAY}Nature of Roots       :{C_RESET} {nature}")
-                    out.append(f"  {C_GRAY}Quadratic Formula     :{C_RESET} {var_x} = (-b ± √Δ) / 2a")
+                    out.append(
+                        f"  {C_GRAY}Quadratic Formula     :{C_RESET} {var_x} = (-b ± √Δ) / 2a"
+                    )
 
                     roots = sp.solve(eq, var_x)
                     formatted_roots: List[str] = []
@@ -438,42 +596,69 @@ def calculate_and_graph(query: str, domain: Optional[Tuple[float, float]] = None
                         sub = str(idx).translate(SUB_DIGITS)
                         var_label = f"{var_x}{sub}" if len(roots) > 1 else str(var_x)
                         clean_sym = clean_math_signs(str(r))
-                        clean_sym = re.sub(r"^(√[0-9a-zA-Z]+)\s*\+\s*([0-9\.\-]+)$", r"\2 + \1", clean_sym)
+                        clean_sym = re.sub(
+                            r"^(√[0-9a-zA-Z]+)\s*\+\s*([0-9\.\-]+)$",
+                            r"\2 + \1",
+                            clean_sym,
+                        )
                         try:
                             fval = float(r.evalf())
-                            formatted_roots.append(f"{var_label} = {clean_sym} ({fval:.4f})")
+                            formatted_roots.append(
+                                f"{var_label} = {clean_sym} ({fval:.4f})"
+                            )
                         except Exception:
                             formatted_roots.append(f"{var_label} = {clean_sym}")
 
-                    out.append(f"  {C_BOLD}{C_GREEN}▶ SOLUTIONS FOR {var_x}     :{C_RESET} {C_BOLD}{C_WHITE}{',  '.join(formatted_roots)}{C_RESET}")
+                    out.append(
+                        f"  {C_BOLD}{C_GREEN}▶ SOLUTIONS FOR {var_x}     :{C_RESET} {C_BOLD}{C_WHITE}{',  '.join(formatted_roots)}{C_RESET}"
+                    )
 
                     h_v = -b_val / (2 * a_val)
                     k_v = c_val - (b_val**2) / (4 * a_val)
-                    out.append(f"  {C_PURPLE}Parabola Vertex (h,k) :{C_RESET} ({float(h_v.evalf()):.3f}, {float(k_v.evalf()):.3f})  │  Axis: {var_x} = {float(h_v.evalf()):.3f}")
+                    out.append(
+                        f"  {C_PURPLE}Parabola Vertex (h,k) :{C_RESET} ({float(h_v.evalf()):.3f}, {float(k_v.evalf()):.3f})  │  Axis: {var_x} = {float(h_v.evalf()):.3f}"
+                    )
 
                     h_f = float(h_v.evalf())
                     xs = np.linspace(h_f - 6.0, h_f + 6.0, 300)
                     ys = f_lamb(xs)
-                    out.append(render_braille_curve(xs, [(ys, C_CYAN, f"y = {clean_math_signs(str(f_diff))}")]))
+                    out.append(
+                        render_braille_curve(
+                            xs, [(ys, C_CYAN, f"y = {clean_math_signs(str(f_diff))}")]
+                        )
+                    )
                     res = "\n".join(out)
                     from host.session_manager import record_calc_in_session
+
                     record_calc_in_session("Math", q_clean, res)
                     if target_vault:
-                        note_p = record_session_calculation("Math", f"Quadratic - {q_clean[:30]}", q_clean, res, ["math", "quadratic"], ["Quadratic Equation", "Algebra"], vault_name=target_vault)
+                        note_p = record_session_calculation(
+                            "Math",
+                            f"Quadratic - {q_clean[:30]}",
+                            q_clean,
+                            res,
+                            ["math", "quadratic"],
+                            ["Quadratic Equation", "Algebra"],
+                            vault_name=target_vault,
+                        )
                         res += f"\n\n{C_BOLD}{C_GREEN}💾 SAVED TO OBSIDIAN VAULT [{target_vault}]:{C_RESET}\n  {C_GRAY}Session Note :{C_RESET} {C_CYAN}{note_p.name}{C_RESET}"
                     return res
             except Exception:
                 pass
 
             sol = sp.solve(eq, var_x)
-            out.append(f"{C_BOLD}{C_GREEN}⚡ EQUATION SOLVER:{C_RESET} {C_WHITE}{clean_math_signs(f'{sym_left} = {sym_right}')}{C_RESET}")
+            out.append(
+                f"{C_BOLD}{C_GREEN}⚡ EQUATION SOLVER:{C_RESET} {C_WHITE}{clean_math_signs(f'{sym_left} = {sym_right}')}{C_RESET}"
+            )
             if isinstance(sol, (list, tuple)):
                 formatted_sols: List[str] = []
                 for idx, s_elem in enumerate(sol, 1):
                     sub = str(idx).translate(SUB_DIGITS)
                     var_label = f"{var_x}{sub}" if len(sol) > 1 else str(var_x)
                     c_elem = clean_math_signs(str(s_elem))
-                    c_elem = re.sub(r"^(√[0-9a-zA-Z]+)\s*\+\s*([0-9\.\-]+)$", r"\2 + \1", c_elem)
+                    c_elem = re.sub(
+                        r"^(√[0-9a-zA-Z]+)\s*\+\s*([0-9\.\-]+)$", r"\2 + \1", c_elem
+                    )
                     try:
                         fval = float(sp.sympify(s_elem).evalf())
                         formatted_sols.append(f"{var_label} = {c_elem} ({fval:.4f})")
@@ -482,21 +667,37 @@ def calculate_and_graph(query: str, domain: Optional[Tuple[float, float]] = None
                 sol_str = ",  ".join(formatted_sols)
             else:
                 sol_str = clean_math_signs(str(sol))
-            out.append(f"{C_AMBER}▶ SOLUTIONS FOR {var_x}:{C_RESET} {C_BOLD}{C_CYAN}{sol_str}{C_RESET}")
+            out.append(
+                f"{C_AMBER}▶ SOLUTIONS FOR {var_x}:{C_RESET} {C_BOLD}{C_CYAN}{sol_str}{C_RESET}"
+            )
 
             xs = np.linspace(-10.0, 10.0, 300)
             ys = f_lamb(xs)
-            out.append(render_braille_curve(xs, [(ys, C_CYAN, f"{clean_math_signs(str(f_diff))} = 0")]))
+            out.append(
+                render_braille_curve(
+                    xs, [(ys, C_CYAN, f"{clean_math_signs(str(f_diff))} = 0")]
+                )
+            )
             res = "\n".join(out)
             from host.session_manager import record_calc_in_session
+
             record_calc_in_session("Math", q_clean, res)
             if target_vault:
-                note_p = record_session_calculation("Math", f"Equation - {q_clean[:30]}", q_clean, res, ["math", "equations"], ["Algebra"], vault_name=target_vault)
+                note_p = record_session_calculation(
+                    "Math",
+                    f"Equation - {q_clean[:30]}",
+                    q_clean,
+                    res,
+                    ["math", "equations"],
+                    ["Algebra"],
+                    vault_name=target_vault,
+                )
                 res += f"\n\n{C_BOLD}{C_GREEN}💾 SAVED TO OBSIDIAN VAULT [{target_vault}]:{C_RESET}\n  {C_GRAY}Session Note :{C_RESET} {C_CYAN}{note_p.name}{C_RESET}"
             return res
         except Exception:
             # Fallback to LLM on parsing failure
             from host.ai import query_gemini
+
             return query_gemini(f"Solve equation: {q_clean}")
 
     # 2. Check for Derivative query: "derivative of ..." / "diff ..."
@@ -506,20 +707,28 @@ def calculate_and_graph(query: str, domain: Optional[Tuple[float, float]] = None
         d_expr = sp.diff(sym_expr, x)
 
         out.append(f"{C_BOLD}{C_GREEN}⚡ CALCULUS // DERIVATIVE:{C_RESET}")
-        out.append(f"  {C_GRAY}f(x)  ={C_RESET} {C_WHITE}{clean_math_signs(str(sym_expr))}{C_RESET}")
-        out.append(f"  {C_AMBER}f'(x) ={C_RESET} {C_BOLD}{C_CYAN}{clean_math_signs(str(d_expr))}{C_RESET}")
+        out.append(
+            f"  {C_GRAY}f(x)  ={C_RESET} {C_WHITE}{clean_math_signs(str(sym_expr))}{C_RESET}"
+        )
+        out.append(
+            f"  {C_AMBER}f'(x) ={C_RESET} {C_BOLD}{C_CYAN}{clean_math_signs(str(d_expr))}{C_RESET}"
+        )
 
         xs = np.linspace(-6.0, 6.0, 300)
         f_l = sp.lambdify(x, sym_expr, modules=["numpy"])
         d_l = sp.lambdify(x, d_expr, modules=["numpy"])
         ys_f = np.array(f_l(xs), dtype=np.float64)
         ys_d = np.array(d_l(xs), dtype=np.float64)
-        out.append(render_braille_curve(xs, [(ys_f, C_CYAN, "f(x)"), (ys_d, C_AMBER, "f'(x)")]))
+        out.append(
+            render_braille_curve(xs, [(ys_f, C_CYAN, "f(x)"), (ys_d, C_AMBER, "f'(x)")])
+        )
         return "\n".join(out)
 
     # 3. Check for Integral query: "integral of ... from a to b" / "integrate ..."
     if q_clean.lower().startswith(("integral", "integrate")):
-        m_bounds = re.search(r"from\s+([0-9\.\-]+)\s+to\s+([0-9\.\-]+)", q_clean, flags=re.I)
+        m_bounds = re.search(
+            r"from\s+([0-9\.\-]+)\s+to\s+([0-9\.\-]+)", q_clean, flags=re.I
+        )
         inner = re.sub(r"from\s+.*", "", q_clean, flags=re.I)
         inner = re.sub(r"^(integral of|integrate|integral)\s+", "", inner, flags=re.I)
         sym_expr = sp.sympify(natural_to_sympy_str(inner))
@@ -527,18 +736,28 @@ def calculate_and_graph(query: str, domain: Optional[Tuple[float, float]] = None
         if m_bounds:
             a_val, b_val = float(m_bounds.group(1)), float(m_bounds.group(2))
             exact_val = sp.integrate(sym_expr, (x, a_val, b_val))
-            out.append(f"{C_BOLD}{C_GREEN}⚡ DEFINITE INTEGRAL [a={a_val}, b={b_val}]:{C_RESET}")
-            out.append(f"  {C_GRAY}∫ f(x) dx ={C_RESET} {C_BOLD}{C_CYAN}{clean_math_signs(str(exact_val))}{C_RESET}  ({float(exact_val):.6f})")
+            out.append(
+                f"{C_BOLD}{C_GREEN}⚡ DEFINITE INTEGRAL [a={a_val}, b={b_val}]:{C_RESET}"
+            )
+            out.append(
+                f"  {C_GRAY}∫ f(x) dx ={C_RESET} {C_BOLD}{C_CYAN}{clean_math_signs(str(exact_val))}{C_RESET}  ({float(exact_val):.6f})"
+            )
             xs = np.linspace(min(a_val, -5.0), max(b_val, 5.0), 300)
         else:
             indef_val = sp.integrate(sym_expr, x)
             out.append(f"{C_BOLD}{C_GREEN}⚡ INDEFINITE INTEGRAL:{C_RESET}")
-            out.append(f"  {C_GRAY}∫ f(x) dx ={C_RESET} {C_BOLD}{C_CYAN}{clean_math_signs(str(indef_val))} + C{C_RESET}")
+            out.append(
+                f"  {C_GRAY}∫ f(x) dx ={C_RESET} {C_BOLD}{C_CYAN}{clean_math_signs(str(indef_val))} + C{C_RESET}"
+            )
             xs = np.linspace(-6.0, 6.0, 300)
 
         f_l = sp.lambdify(x, sym_expr, modules=["numpy"])
         ys = np.array(f_l(xs), dtype=np.float64)
-        out.append(render_braille_curve(xs, [(ys, C_CYAN, f"f(x) = {clean_math_signs(str(sym_expr))}")]))
+        out.append(
+            render_braille_curve(
+                xs, [(ys, C_CYAN, f"f(x) = {clean_math_signs(str(sym_expr))}")]
+            )
+        )
         return "\n".join(out)
 
     # 4. Multi-Function Plotting: "sin(x), cos(x)"
@@ -553,8 +772,12 @@ def calculate_and_graph(query: str, domain: Optional[Tuple[float, float]] = None
             s_expr = sp.sympify(natural_to_sympy_str(part))
             fn = sp.lambdify(x, s_expr, modules=["numpy"])
             y_vals = np.array(fn(xs), dtype=np.float64)
-            curves.append((y_vals, colors[idx % len(colors)], clean_math_signs(str(s_expr))))
-            out.append(f"  {colors[idx % len(colors)]}Curve {idx+1}:{C_RESET} {clean_math_signs(str(s_expr))}")
+            curves.append(
+                (y_vals, colors[idx % len(colors)], clean_math_signs(str(s_expr)))
+            )
+            out.append(
+                f"  {colors[idx % len(colors)]}Curve {idx + 1}:{C_RESET} {clean_math_signs(str(s_expr))}"
+            )
 
         out.append(render_braille_curve(xs, curves))
         return "\n".join(out)
@@ -570,22 +793,34 @@ def calculate_and_graph(query: str, domain: Optional[Tuple[float, float]] = None
         d_expr = sp.diff(sym_expr, x)
         integ_expr = sp.integrate(sym_expr, x)
 
-        out.append(f"{C_BOLD}{C_GREEN}⚡ FUNCTION CALCULATOR:{C_RESET} {C_WHITE}f(x) = {clean_math_signs(str(sym_expr))}{C_RESET}")
-        out.append(f"  {C_GRAY}Derivative f'(x)     :{C_RESET} {C_CYAN}{clean_math_signs(str(d_expr))}{C_RESET}")
-        out.append(f"  {C_GRAY}Integral   ∫ f(x) dx :{C_RESET} {C_PURPLE}{clean_math_signs(str(integ_expr))} + C{C_RESET}")
+        out.append(
+            f"{C_BOLD}{C_GREEN}⚡ FUNCTION CALCULATOR:{C_RESET} {C_WHITE}f(x) = {clean_math_signs(str(sym_expr))}{C_RESET}"
+        )
+        out.append(
+            f"  {C_GRAY}Derivative f'(x)     :{C_RESET} {C_CYAN}{clean_math_signs(str(d_expr))}{C_RESET}"
+        )
+        out.append(
+            f"  {C_GRAY}Integral   ∫ f(x) dx :{C_RESET} {C_PURPLE}{clean_math_signs(str(integ_expr))} + C{C_RESET}"
+        )
 
         # Find roots f(x) = 0
         try:
             roots = sp.solve(sym_expr, x)
             real_roots = [r for r in roots if sp.re(r) == r or r.is_real]
             if real_roots:
-                r_str = ", ".join(clean_math_signs(f"{float(r):.4f}") for r in real_roots[:4])
-                out.append(f"  {C_GRAY}Roots (f=0)      :{C_RESET} {C_AMBER}{r_str}{C_RESET}")
+                r_str = ", ".join(
+                    clean_math_signs(f"{float(r):.4f}") for r in real_roots[:4]
+                )
+                out.append(
+                    f"  {C_GRAY}Roots (f=0)      :{C_RESET} {C_AMBER}{r_str}{C_RESET}"
+                )
         except Exception:
             pass
 
         # Domain selection
-        xs = np.linspace(domain[0] if domain else -4.0, domain[1] if domain else 4.0, 320)
+        xs = np.linspace(
+            domain[0] if domain else -4.0, domain[1] if domain else 4.0, 320
+        )
         if "sqrt" in str(sym_expr) or "log" in str(sym_expr):
             xs = np.linspace(0.01, 12.0, 320)
 
@@ -594,25 +829,48 @@ def calculate_and_graph(query: str, domain: Optional[Tuple[float, float]] = None
         ys_f = np.array(f_l(xs), dtype=np.float64)
         ys_d = np.array(d_l(xs), dtype=np.float64)
 
-        out.append(render_braille_curve(xs, [(ys_f, C_CYAN, f"f(x) = {clean_math_signs(str(sym_expr))}"), (ys_d, C_AMBER, "f'(x)")], cols=56, rows=8))
+        out.append(
+            render_braille_curve(
+                xs,
+                [
+                    (ys_f, C_CYAN, f"f(x) = {clean_math_signs(str(sym_expr))}"),
+                    (ys_d, C_AMBER, "f'(x)"),
+                ],
+                cols=56,
+                rows=8,
+            )
+        )
     else:
         # Pure Numerical / Symbolic Scalar calculation!
         val_eval = sym_expr.evalf()
-        out.append(f"{C_BOLD}{C_GREEN}⚡ SCIENTIFIC CALCULATION:{C_RESET} {C_WHITE}{clean_math_signs(q_clean)}{C_RESET}")
-        out.append(f"  {C_GRAY}Symbolic Form :{C_RESET} {C_CYAN}{clean_math_signs(str(sym_expr))}{C_RESET}")
-        out.append(f"  {C_BOLD}{C_GREEN}Exact Decimal :{C_RESET} {C_WHITE}{float(val_eval):+16.10f}{C_RESET}")
-        out.append(f"  {C_GRAY}Scientific    :{C_RESET} {C_AMBER}{float(val_eval):.8e}{C_RESET}")
+        out.append(
+            f"{C_BOLD}{C_GREEN}⚡ SCIENTIFIC CALCULATION:{C_RESET} {C_WHITE}{clean_math_signs(q_clean)}{C_RESET}"
+        )
+        out.append(
+            f"  {C_GRAY}Symbolic Form :{C_RESET} {C_CYAN}{clean_math_signs(str(sym_expr))}{C_RESET}"
+        )
+        out.append(
+            f"  {C_BOLD}{C_GREEN}Exact Decimal :{C_RESET} {C_WHITE}{float(val_eval):+16.10f}{C_RESET}"
+        )
+        out.append(
+            f"  {C_GRAY}Scientific    :{C_RESET} {C_AMBER}{float(val_eval):.8e}{C_RESET}"
+        )
 
         # Quick neighborhood visualization
         c_val = float(val_eval)
         d_val = max(1.0, abs(c_val) * 0.5)
         xs = np.linspace(c_val - d_val, c_val + d_val, 100)
-        out.append(render_braille_curve(xs, [(xs, C_CYAN, f"value={c_val:.4f}")], cols=48, rows=4))
+        out.append(
+            render_braille_curve(
+                xs, [(xs, C_CYAN, f"value={c_val:.4f}")], cols=48, rows=4
+            )
+        )
 
     result_str = "\n".join(out)
 
     # Record in active session history
     from host.session_manager import record_calc_in_session, get_active_session
+
     record_calc_in_session("Math", q_clean, result_str)
     active_sess = get_active_session()
 
@@ -645,16 +903,34 @@ def run_calc_repl() -> None:
     """Interactive All-In-One Terminal Shell (Math, Physics, Chemistry, Neural Loop, Obsidian)."""
     if os.name == "nt":
         os.system("")
-    print(f"\n{C_BOLD}{C_CYAN}╔═══════════════════════════════════════════════════════════════╗{C_RESET}")
-    print(f"{C_BOLD}{C_CYAN}║     ⚡ nuro — All-In-One Interactive Terminal Shell           ║{C_RESET}")
-    print(f"{C_BOLD}{C_CYAN}╚═══════════════════════════════════════════════════════════════╝{C_RESET}")
-    print(f"{C_GRAY}Normal Signs Only:{C_RESET} {C_GREEN}* (multiply){C_RESET} │ {C_CYAN}+ (add){C_RESET} │ {C_AMBER}- (subtract){C_RESET} │ {C_PURPLE}/ (divide){C_RESET} │ {C_WHITE}^ or ** (power){C_RESET}")
+    print(
+        f"\n{C_BOLD}{C_CYAN}╔═══════════════════════════════════════════════════════════════╗{C_RESET}"
+    )
+    print(
+        f"{C_BOLD}{C_CYAN}║     ⚡ nuro — All-In-One Interactive Terminal Shell           ║{C_RESET}"
+    )
+    print(
+        f"{C_BOLD}{C_CYAN}╚═══════════════════════════════════════════════════════════════╝{C_RESET}"
+    )
+    print(
+        f"{C_GRAY}Normal Signs Only:{C_RESET} {C_GREEN}* (multiply){C_RESET} │ {C_CYAN}+ (add){C_RESET} │ {C_AMBER}- (subtract){C_RESET} │ {C_PURPLE}/ (divide){C_RESET} │ {C_WHITE}^ or ** (power){C_RESET}"
+    )
     print(f"{C_GRAY}Commands (All in Terminal):{C_RESET}")
-    print(f"  {C_CYAN}Math     :{C_RESET} quad 1 -5 6 │ 5*3 + 10 │ x^2 - 5x + 6 = 0 │ diff sin(x) │ integrate x^2")
-    print(f"  {C_AMBER}Physics  :{C_RESET} pascal 50 0.01 0.5 │ projectile v=50 angle=45 │ rlc R=5 L=50 C=100")
-    print(f"  {C_GREEN}Chemistry:{C_RESET} mass C6H12O6 │ KMnO4 + HCl -> KCl + MnCl2 + H2O + Cl2 │ ph 0.01")
-    print(f"  {C_PURPLE}Neural   :{C_RESET} live / tui (animated 60 FPS graph) │ burst (trigger test) │ neuro (telemetry)")
-    print(f"  {C_WHITE}Obsidian :{C_RESET} session switch <name> │ to obsidian [vault] │ obsidian\n")
+    print(
+        f"  {C_CYAN}Math     :{C_RESET} quad 1 -5 6 │ 5*3 + 10 │ x^2 - 5x + 6 = 0 │ diff sin(x) │ integrate x^2"
+    )
+    print(
+        f"  {C_AMBER}Physics  :{C_RESET} pascal 50 0.01 0.5 │ projectile v=50 angle=45 │ rlc R=5 L=50 C=100"
+    )
+    print(
+        f"  {C_GREEN}Chemistry:{C_RESET} mass C6H12O6 │ KMnO4 + HCl -> KCl + MnCl2 + H2O + Cl2 │ ph 0.01"
+    )
+    print(
+        f"  {C_PURPLE}Neural   :{C_RESET} live / tui (animated 60 FPS graph) │ burst (trigger test) │ neuro (telemetry)"
+    )
+    print(
+        f"  {C_WHITE}Obsidian :{C_RESET} session switch <name> │ to obsidian [vault] │ obsidian\n"
+    )
 
     while True:
         try:

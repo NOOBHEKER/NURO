@@ -11,6 +11,7 @@ Features:
   [7] 32-Byte Binary Frame Hex & Hardware Register Inspector (TX Sample & RX Result)
   [8] Real-Time Stimulation Event Log + Interactive CLI Prompt (`neural-loop@esp32s3:~$`)
 """
+
 from __future__ import annotations
 
 import json
@@ -18,7 +19,7 @@ import threading
 import time
 from collections import deque
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Dict, Any, Deque, List
+from typing import Dict, Any, Deque, List, Optional
 import numpy as np
 import serial
 
@@ -307,8 +308,8 @@ HTML_PAGE = """<!DOCTYPE html>
       <div class="kv-row"><span class="kv-k">Arm C (Random-Phase Sham):</span><span class="kv-v" style="color:var(--amber)">0.895 ± 0.040 (Fails to suppress)</span></div>
       <div class="kv-row"><span class="kv-k">Arm D (Phase-Locked @ φ*=-π):</span><span class="kv-v" style="color:var(--green)">0.149 ± 0.032 (0.292 Live HIL)</span></div>
       <div class="kv-row"><span class="kv-k">ΔR (Sham − Locked) 95% CI:</span><span class="kv-v" style="color:var(--green)">+0.746 [0.716, 0.783] (G7/G8 PASS)</span></div>
-      <div class="kv-row"><span class="kv-k">Gate G5 Int8 LIF SNN Detector:</span><span class="kv-v" style="color:var(--cyan)">0.9998 AUROC vs 0.884 Amp (G5 PASS)</span></div>
-      <div class="kv-row"><span class="kv-k">Gate G6 Pre-Ictal Predictor:</span><span class="kv-v" style="color:var(--cyan)">0.990 AUROC │ 53.0s Lead │ 0.125 FA/h</span></div>
+      <div class="kv-row"><span class="kv-k">Gate G5 (SYNTHETIC surrogate):</span><span class="kv-v" style="color:var(--cyan)">0.9998 AUROC vs 0.884 Amp (not CHB-MIT)</span></div>
+      <div class="kv-row"><span class="kv-k">Gate G6 (SYNTHETIC surrogate):</span><span class="kv-v" style="color:var(--cyan)">0.990 AUROC │ 53.0s Lead │ 0.125 FA/h</span></div>
       <div class="kv-row"><span class="kv-k">Safety Watchdog & Blanking:</span><span class="kv-v" style="color:var(--green)">T_BLANK=20ms │ F_RUNAWAY=0x00</span></div>
     </div>
   </div>
@@ -759,16 +760,20 @@ poll();
 
 
 class TuiCockpitEngine:
-    def __init__(self, port: str = "COM6", baudrate: int = 2000000) -> None:
+    def __init__(self, port: Optional[str] = None, baudrate: int = 2000000) -> None:
+        from host.board import resolve_port
+
         enable_windows_1ms_timer()
-        self.port = port
+        self.port = resolve_port(port)
         self.baudrate = baudrate
         self.ser = None
         self.hw_live = False
         self._connect_serial()
 
         self.k_brain = KuramotoBrain(KuramotoConfig(seed=2026))
-        self.k_brain.theta = np.mod(self.k_brain.rng.normal(0.0, 0.55, size=self.k_brain.cfg.n_osc), 2.0 * np.pi)
+        self.k_brain.theta = np.mod(
+            self.k_brain.rng.normal(0.0, 0.55, size=self.k_brain.cfg.n_osc), 2.0 * np.pi
+        )
         self.k_brain.step_idx = int(30.0 / self.k_brain.cfg.dt_s)
         self.jr_brain = JansenRitBrain(JansenRitConfig(seed=2026))
         self.dsp = DspChainRef()
@@ -784,12 +789,18 @@ class TuiCockpitEngine:
         self.dsp_win: Deque[float] = deque([18.0] * 100, maxlen=100)
         self.wcet_win: Deque[float] = deque([82.0] * 100, maxlen=100)
         self.events: Deque[str] = deque(maxlen=5)
-        self.events.append("[BOOT] Neural Loop TUI v2.0 online — 32B CRC16 lockstep @ 2 Mbps")
+        self.events.append(
+            "[BOOT] Neural Loop TUI v2.0 online — 32B CRC16 lockstep @ 2 Mbps"
+        )
 
         self.loop_on = True
         self.arm_idx = 0
         self.model_idx = 0
-        self.arm_names = ["D: PHASE-LOCKED (φ*=-π)", "C: RANDOM-PHASE SHAM", "B: OPEN-LOOP 20 Hz"]
+        self.arm_names = [
+            "D: PHASE-LOCKED (φ*=-π)",
+            "C: RANDOM-PHASE SHAM",
+            "B: OPEN-LOOP 20 Hz",
+        ]
         self.model_names = ["STAGE 1: KURAMOTO (N=64)", "STAGE 2: JANSEN-RIT NMM"]
         self.seq = 0
         self.pulses = 0
@@ -804,15 +815,26 @@ class TuiCockpitEngine:
         self.last_tx_hex = ""
         self.last_rx_hex = ""
         self.last_res = ResultFrame(
-            state=1, seq=0, t_rx_us=1000, t_dsp_us=1018, t_dec_us=1082, t_stim_us=0,
-            cls=1, conf=200, phase_q15=-31000, R_q15=10000, budget_used=0
+            state=1,
+            seq=0,
+            t_rx_us=1000,
+            t_dsp_us=1018,
+            t_dec_us=1082,
+            t_stim_us=0,
+            cls=1,
+            conf=200,
+            phase_q15=-31000,
+            R_q15=10000,
+            budget_used=0,
         )
         self.lock = threading.Lock()
         self.running = True
 
     def _connect_serial(self) -> None:
         try:
-            self.ser = serial.Serial(port=self.port, baudrate=self.baudrate, timeout=0.20, write_timeout=0.20)
+            self.ser = serial.Serial(
+                port=self.port, baudrate=self.baudrate, timeout=0.20, write_timeout=0.20
+            )
             self.ser.dtr = False
             self.ser.rts = False
             time.sleep(0.30)
@@ -827,7 +849,9 @@ class TuiCockpitEngine:
             cmd = raw_cmd.replace("cli:", "").strip().lower()
             if cmd in ("toggle_loop", "loop"):
                 self.loop_on = not self.loop_on
-                self.events.append(f"[CLI] Loop -> {'ON (SUPPRESSING)' if self.loop_on else 'OFF (ICTAL SURGE)'}")
+                self.events.append(
+                    f"[CLI] Loop -> {'ON (SUPPRESSING)' if self.loop_on else 'OFF (ICTAL SURGE)'}"
+                )
             elif cmd == "loop on":
                 self.loop_on = True
                 self.events.append("[CLI] Closed-Loop enabled (SUPPRESSING)")
@@ -857,14 +881,21 @@ class TuiCockpitEngine:
                 self.events.append(f"[CLI] Model -> {self.model_names[0]}")
             elif cmd in ("inject_burst", "burst", "reset"):
                 self.k_brain.theta = np.mod(
-                    self.k_brain.rng.normal(0.0, 0.35, size=self.k_brain.cfg.n_osc), 2.0 * np.pi
+                    self.k_brain.rng.normal(0.0, 0.35, size=self.k_brain.cfg.n_osc),
+                    2.0 * np.pi,
                 )
                 self.stim_phases.clear()
-                self.events.append("[CLI] Injected synchronous seizure burst (R -> 0.90)")
+                self.events.append(
+                    "[CLI] Injected synchronous seizure burst (R -> 0.90)"
+                )
             elif cmd == "help":
-                self.events.append("[HELP] Commands: loop on/off | arm d/c/b | model 1/2 | burst")
+                self.events.append(
+                    "[HELP] Commands: loop on/off | arm d/c/b | model 1/2 | burst"
+                )
             else:
-                self.events.append(f"[CLI] Unknown '{cmd}' — try: loop on/off, arm d/c/b, burst")
+                self.events.append(
+                    f"[CLI] Unknown '{cmd}' — try: loop on/off, arm d/c/b, burst"
+                )
 
     def step_batch(self, n_frames: int = 16) -> None:
         with self.lock:
@@ -904,7 +935,11 @@ class TuiCockpitEngine:
                     mode=MODE_LOCKSTEP,
                 )
                 tx_bytes = sf.to_bytes()
-                self.last_tx_hex = tx_bytes[:16].hex(" ").upper() + " │ " + tx_bytes[16:].hex(" ").upper()
+                self.last_tx_hex = (
+                    tx_bytes[:16].hex(" ").upper()
+                    + " │ "
+                    + tx_bytes[16:].hex(" ").upper()
+                )
                 self.seq += 1
 
                 if self.hw_live and self.ser is not None:
@@ -914,16 +949,34 @@ class TuiCockpitEngine:
                         rx = self.ser.read(32)
                         t1 = time.perf_counter_ns()
                         if len(rx) == 32:
-                            self.last_rx_hex = rx[:16].hex(" ").upper() + " │ " + rx[16:].hex(" ").upper()
+                            self.last_rx_hex = (
+                                rx[:16].hex(" ").upper()
+                                + " │ "
+                                + rx[16:].hex(" ").upper()
+                            )
                             self.last_res = ResultFrame.from_bytes(rx)
                             self.valid_frames += 1
                             self.rtt_win.append((t1 - t0) / 1000.0)
-                            self.dsp_win.append(float((self.last_res.t_dsp_us - self.last_res.t_rx_us) & 0xFFFFFFFF))
-                            self.wcet_win.append(float((self.last_res.t_dec_us - self.last_res.t_rx_us) & 0xFFFFFFFF))
+                            self.dsp_win.append(
+                                float(
+                                    (self.last_res.t_dsp_us - self.last_res.t_rx_us)
+                                    & 0xFFFFFFFF
+                                )
+                            )
+                            self.wcet_win.append(
+                                float(
+                                    (self.last_res.t_dec_us - self.last_res.t_rx_us)
+                                    & 0xFFFFFFFF
+                                )
+                            )
                             if self.loop_on:
                                 if self.arm_idx == 0 and self.last_res.t_stim_us != 0:
                                     fired = True
-                                elif self.arm_idx == 1 and self.refrac == 0 and self.k_brain.rng.random() < 0.015:
+                                elif (
+                                    self.arm_idx == 1
+                                    and self.refrac == 0
+                                    and self.k_brain.rng.random() < 0.015
+                                ):
                                     fired = True
                                 elif self.arm_idx == 2 and (self.seq % 50 == 0):
                                     fired = True
@@ -933,7 +986,11 @@ class TuiCockpitEngine:
                         self.crc_err += 1
                 else:
                     if self.loop_on and self.refrac == 0:
-                        if self.arm_idx == 0 and r_val > 0.22 and np.cos(psi_val) < -0.82:
+                        if (
+                            self.arm_idx == 0
+                            and r_val > 0.22
+                            and np.cos(psi_val) < -0.82
+                        ):
                             fired = True
                         elif self.arm_idx == 1 and self.k_brain.rng.random() < 0.015:
                             fired = True
@@ -956,7 +1013,9 @@ class TuiCockpitEngine:
 
                 if not self.loop_on and r_val < 0.88:
                     self.k_brain.theta = np.mod(
-                        self.k_brain.theta - 0.016 * np.sin(self.k_brain.theta - psi_val), 2.0 * np.pi
+                        self.k_brain.theta
+                        - 0.016 * np.sin(self.k_brain.theta - psi_val),
+                        2.0 * np.pi,
                     )
 
                 self.raw_buf.append(round(s1 / 1024.0, 3))
@@ -981,7 +1040,9 @@ class TuiCockpitEngine:
             )
             return {
                 "hw_live": self.hw_live,
-                "hw_badge": f"● LIVE ESP32-S3 ({self.port} @ 2M)" if self.hw_live else "● IN-SILICO SIMULATOR",
+                "hw_badge": f"● LIVE ESP32-S3 ({self.port} @ 2M)"
+                if self.hw_live
+                else "● IN-SILICO SIMULATOR",
                 "loop_on": self.loop_on,
                 "arm_name": self.arm_names[self.arm_idx],
                 "model_name": self.model_names[self.model_idx],
@@ -997,7 +1058,7 @@ class TuiCockpitEngine:
                 "spark_bp": make_sparkline(bp_l, -2.5, 2.5, 44),
                 "r_buf": r_l,
                 "psi_tail": psi_l,
-                "r_tail": r_l[-len(psi_l):],
+                "r_tail": r_l[-len(psi_l) :],
                 "stim_indices": list(self.stim_indices),
                 "stim_phases": list(self.stim_phases),
                 "p50_rtt": float(np.percentile(self.rtt_win, 50)),
@@ -1013,7 +1074,12 @@ class TuiCockpitEngine:
             }
 
 
-def run_web_cockpit(host: str = "127.0.0.1", port: int = 8765, serial_port: str = "COM6") -> None:
+def create_web_cockpit(
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    serial_port: Optional[str] = None,
+) -> tuple[TuiCockpitEngine, HTTPServer]:
+    """Build the engine and HTTP server without blocking (used by `nuro demo`)."""
     engine = TuiCockpitEngine(port=serial_port)
 
     def bg_loop() -> None:
@@ -1030,7 +1096,7 @@ def run_web_cockpit(host: str = "127.0.0.1", port: int = 8765, serial_port: str 
 
         def do_GET(self) -> None:
             if self.path == "/" or self.path.startswith("/index"):
-                body = HTML_PAGE.encode("utf-8")
+                body = HTML_PAGE.replace("COM6", str(engine.port)).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
@@ -1049,6 +1115,7 @@ def run_web_cockpit(host: str = "127.0.0.1", port: int = 8765, serial_port: str 
 
         def do_POST(self) -> None:
             from urllib.parse import urlparse, parse_qs
+
             qs = parse_qs(urlparse(self.path).query)
             act = qs.get("action", [""])[0]
             if act:
@@ -1058,8 +1125,21 @@ def run_web_cockpit(host: str = "127.0.0.1", port: int = 8765, serial_port: str 
             self.wfile.write(b"{}")
 
     srv = HTTPServer((host, port), Handler)
+    return engine, srv
+
+
+def run_web_cockpit(
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    serial_port: Optional[str] = None,
+) -> None:
+    engine, srv = create_web_cockpit(host=host, port=port, serial_port=serial_port)
     print(f"NEURAL LOOP TUI Workstation v2.0 running at: http://{host}:{port}")
-    srv.serve_forever()
+    try:
+        srv.serve_forever()
+    finally:
+        engine.running = False
+        srv.server_close()
 
 
 if __name__ == "__main__":

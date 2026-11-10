@@ -1,14 +1,16 @@
-"""Hardware-in-the-Loop (HIL) transport, clock calibration, and benchmark runner on COM6."""
+"""Hardware-in-the-Loop (HIL) transport, clock calibration, and benchmark runner."""
+
 from __future__ import annotations
 
 import json
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import numpy as np
 import serial
 
+from host.board import resolve_port
 from host.hil.protocol import (
     SampleFrame,
     ResultFrame,
@@ -23,13 +25,13 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def run_hil_benchmark(
-    port: str = "COM6",
+    port: Optional[str] = None,
     baudrate: int = 2000000,
     n_frames: int = 1000,
     seed: int = 2026,
     runs_root: Path = REPO_ROOT / "runs",
 ) -> Dict[str, Any]:
-    """Run a hardware-in-the-loop closed-loop session against the ESP32-S3 on COM6.
+    """Run a hardware-in-the-loop closed-loop session against the ESP32-S3.
 
     Records:
     - Host-to-host round-trip latency (us): p50, p95, p99, max
@@ -37,6 +39,7 @@ def run_hil_benchmark(
     - Device total compute time (t_dec_us - t_rx_us): p50, p95, p99, max
     - Dropped frames, sequence gaps, and stimulation pulses delivered
     """
+    port = resolve_port(port)
     enable_windows_1ms_timer()
     brain = KuramotoBrain(KuramotoConfig(seed=seed))
     # Start in ictal window (t = 30.0 s, K = 6.0)
@@ -114,9 +117,17 @@ def run_hil_benchmark(
 
     ser.close()
 
-    rtt_arr = np.array(rtt_us_list, dtype=np.float64) if rtt_us_list else np.array([0.0])
-    dsp_arr = np.array(dsp_us_list, dtype=np.float64) if dsp_us_list else np.array([0.0])
-    comp_arr = np.array(compute_us_list, dtype=np.float64) if compute_us_list else np.array([0.0])
+    rtt_arr = (
+        np.array(rtt_us_list, dtype=np.float64) if rtt_us_list else np.array([0.0])
+    )
+    dsp_arr = (
+        np.array(dsp_us_list, dtype=np.float64) if dsp_us_list else np.array([0.0])
+    )
+    comp_arr = (
+        np.array(compute_us_list, dtype=np.float64)
+        if compute_us_list
+        else np.array([0.0])
+    )
 
     metrics: Dict[str, Any] = {
         "timestamp": datetime.now().isoformat(),
@@ -144,7 +155,9 @@ def run_hil_benchmark(
     ts_slug = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir = runs_root / f"{ts_slug}__lockstep__kuramoto__phase_locked"
     run_dir.mkdir(parents=True, exist_ok=True)
-    (run_dir / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    (run_dir / "metrics.json").write_text(
+        json.dumps(metrics, indent=2), encoding="utf-8"
+    )
     metrics["run_dir"] = str(run_dir)
     return metrics
 

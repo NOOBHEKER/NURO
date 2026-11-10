@@ -9,6 +9,7 @@ Features:
 - Live Latency Distribution Histogram (p50 / p95 / p99 / WCET) + 5-Interlock Safety Matrix
 - Interactive Hotkeys: [SPACE] Loop ON/OFF, [M] Arm D/C/B, [1/2] Kuramoto/Jansen-Rit, [R] Seizure Burst, [Q] Quit
 """
+
 from __future__ import annotations
 
 import argparse
@@ -133,7 +134,9 @@ def render_braille_plot(
     return out_lines
 
 
-def sparkline(values: List[float], lo: float, hi: float, width: int = 48, color: str = C_CYAN) -> str:
+def sparkline(
+    values: List[float], lo: float, hi: float, width: int = 48, color: str = C_CYAN
+) -> str:
     if not values:
         return " " * width
     arr = np.array(values[-width:], dtype=np.float64)
@@ -152,8 +155,16 @@ def render_phase_compass(psi_rad: float, r_val: float, fired: bool) -> List[str]
     p = [f"{C_GRAY}·{C_RESET}"] * 12
     p[0] = f"{C_GREEN}◎{C_RESET}"  # Optimal PRC target φ* = -π
     p[sector] = f"{C_GREEN}★{C_RESET}" if fired else f"{C_WHITE}●{C_RESET}"
-    vec_char = "←" if sector in (0, 1, 11) else ("↓" if sector in (2, 3, 4) else ("→" if sector in (5, 6, 7) else "↑"))
-    center = f"{C_GREEN}{vec_char}{C_RESET}" if r_val < 0.35 else f"{C_RED}{vec_char}{C_RESET}"
+    vec_char = (
+        "←"
+        if sector in (0, 1, 11)
+        else ("↓" if sector in (2, 3, 4) else ("→" if sector in (5, 6, 7) else "↑"))
+    )
+    center = (
+        f"{C_GREEN}{vec_char}{C_RESET}"
+        if r_val < 0.35
+        else f"{C_RED}{vec_char}{C_RESET}"
+    )
     return [
         f"          +π/2 {p[9]}               ",
         f"       {p[10]}        {p[8]}            ",
@@ -165,7 +176,9 @@ def render_phase_compass(psi_rad: float, r_val: float, fired: bool) -> List[str]
     ]
 
 
-def render_snn_raster(env_q15: int, phase_q15: int, step_num: int, width: int = 32) -> str:
+def render_snn_raster(
+    env_q15: int, phase_q15: int, step_num: int, width: int = 32
+) -> str:
     """Deterministic 32-column visualization of the 64-neuron Int8 LIF SNN population activity."""
     cells: List[str] = []
     for i in range(width):
@@ -188,7 +201,14 @@ def make_row(left: str, right: str, w_left: int = 62, w_right: int = 38) -> str:
     return f"│ {pad_ansi(left, w_left)} │ {pad_ansi(right, w_right)} │"
 
 
-def run_tui(port: str = "COM6", baudrate: int = 2000000, max_frames: Optional[int] = None) -> None:
+def run_tui(
+    port: Optional[str] = None,
+    baudrate: int = 2000000,
+    max_frames: Optional[int] = None,
+) -> None:
+    from host.board import resolve_port
+
+    port = resolve_port(port)
     if os.name == "nt":
         os.system("")
         try:
@@ -199,19 +219,25 @@ def run_tui(port: str = "COM6", baudrate: int = 2000000, max_frames: Optional[in
 
     ser = None
     hw_live = False
-    try:
-        ser = serial.Serial(port=port, baudrate=baudrate, timeout=0.20, write_timeout=0.20)
-        ser.dtr = False
-        ser.rts = False
-        time.sleep(0.30)
-        ser.reset_input_buffer()
-        ser.reset_output_buffer()
-        hw_live = True
-    except Exception:
-        hw_live = False
+    mirror = os.environ.get("NURO_DEMO_MIRROR") == "1"
+    if not mirror:
+        try:
+            ser = serial.Serial(
+                port=port, baudrate=baudrate, timeout=0.20, write_timeout=0.20
+            )
+            ser.dtr = False
+            ser.rts = False
+            time.sleep(0.30)
+            ser.reset_input_buffer()
+            ser.reset_output_buffer()
+            hw_live = True
+        except Exception:
+            hw_live = False
 
     k_brain = KuramotoBrain(KuramotoConfig(seed=2026))
-    k_brain.theta = np.mod(k_brain.rng.normal(0.0, 0.55, size=k_brain.cfg.n_osc), 2.0 * np.pi)
+    k_brain.theta = np.mod(
+        k_brain.rng.normal(0.0, 0.55, size=k_brain.cfg.n_osc), 2.0 * np.pi
+    )
     k_brain.step_idx = int(30.0 / k_brain.cfg.dt_s)
     jr_brain = JansenRitBrain(JansenRitConfig(seed=2026))
     dsp = DspChainRef()
@@ -223,12 +249,19 @@ def run_tui(port: str = "COM6", baudrate: int = 2000000, max_frames: Optional[in
     dsp_win: Deque[float] = deque([18.0] * 100, maxlen=100)
     wcet_win: Deque[float] = deque([82.0] * 100, maxlen=100)
     event_log: Deque[str] = deque(maxlen=4)
-    event_log.append("[BOOT] Neural Loop TUI v2.0 — 32B CRC16 lockstep @ 2 Mbps")
+    if mirror:
+        event_log.append("[DEMO] In-silico mirror — the web cockpit owns the live port")
+    else:
+        event_log.append("[BOOT] Neural Loop TUI v2.0 — 32B CRC16 lockstep @ 2 Mbps")
 
     loop_on = True
     arm_idx = 0
     model_idx = 0
-    arm_names = ["D: PHASE-LOCKED (φ*=-π)", "C: RANDOM-PHASE SHAM", "B: OPEN-LOOP 20 Hz"]
+    arm_names = [
+        "D: PHASE-LOCKED (φ*=-π)",
+        "C: RANDOM-PHASE SHAM",
+        "B: OPEN-LOOP 20 Hz",
+    ]
     model_names = ["STAGE 1: KURAMOTO (N=64)", "STAGE 2: JANSEN-RIT NMM"]
 
     seq = 0
@@ -240,8 +273,17 @@ def run_tui(port: str = "COM6", baudrate: int = 2000000, max_frames: Optional[in
     last_tx_hex = "4E 4C 01 01 00 00 00 00"
     last_rx_hex = "4E 4C 81 01 00 00 00 00"
     last_res = ResultFrame(
-        state=1, seq=0, t_rx_us=1000, t_dsp_us=1018, t_dec_us=1082, t_stim_us=0,
-        cls=1, conf=230, phase_q15=-31000, R_q15=24000, budget_used=0
+        state=1,
+        seq=0,
+        t_rx_us=1000,
+        t_dsp_us=1018,
+        t_dec_us=1082,
+        t_stim_us=0,
+        cls=1,
+        conf=230,
+        phase_q15=-31000,
+        R_q15=24000,
+        budget_used=0,
     )
 
     if max_frames is None:
@@ -251,6 +293,7 @@ def run_tui(port: str = "COM6", baudrate: int = 2000000, max_frames: Optional[in
     if os.name == "nt" and max_frames is None:
         try:
             import msvcrt
+
             has_msvcrt = True
         except ImportError:
             pass
@@ -267,20 +310,32 @@ def run_tui(port: str = "COM6", baudrate: int = 2000000, max_frames: Optional[in
             frame_count += 1
             if has_msvcrt:
                 import msvcrt
+
                 while msvcrt.kbhit():
                     ch = msvcrt.getch()
                     if ch == b" ":
                         loop_on = not loop_on
-                        event_log.append(f"[KEY] Closed-Loop -> {'ON (SUPPRESSING)' if loop_on else 'OFF (ICTAL SURGE)'}")
+                        event_log.append(
+                            f"[KEY] Closed-Loop -> {'ON (SUPPRESSING)' if loop_on else 'OFF (ICTAL SURGE)'}"
+                        )
                     elif ch in (b"m", b"M"):
                         arm_idx = (arm_idx + 1) % 3
-                        event_log.append(f"[KEY] Controller Arm -> {arm_names[arm_idx]}")
+                        event_log.append(
+                            f"[KEY] Controller Arm -> {arm_names[arm_idx]}"
+                        )
                     elif ch in (b"1", b"2"):
                         model_idx = 0 if ch == b"1" else 1
-                        event_log.append(f"[KEY] Brain Model -> {model_names[model_idx]}")
+                        event_log.append(
+                            f"[KEY] Brain Model -> {model_names[model_idx]}"
+                        )
                     elif ch in (b"r", b"R"):
-                        k_brain.theta = np.mod(k_brain.rng.normal(0.0, 0.35, size=k_brain.cfg.n_osc), 2.0 * np.pi)
-                        event_log.append("[KEY] Injected synchronous seizure burst (R -> 0.90)")
+                        k_brain.theta = np.mod(
+                            k_brain.rng.normal(0.0, 0.35, size=k_brain.cfg.n_osc),
+                            2.0 * np.pi,
+                        )
+                        event_log.append(
+                            "[KEY] Injected synchronous seizure burst (R -> 0.90)"
+                        )
                     elif ch in (b"q", b"Q", b"\x1b"):
                         return
 
@@ -309,7 +364,11 @@ def run_tui(port: str = "COM6", baudrate: int = 2000000, max_frames: Optional[in
                     mode=MODE_LOCKSTEP,
                 )
                 tx_bytes = sf.to_bytes()
-                last_tx_hex = tx_bytes[:10].hex(" ").upper() + " .. " + tx_bytes[28:].hex(" ").upper()
+                last_tx_hex = (
+                    tx_bytes[:10].hex(" ").upper()
+                    + " .. "
+                    + tx_bytes[28:].hex(" ").upper()
+                )
                 seq += 1
 
                 if hw_live and ser is not None:
@@ -319,16 +378,32 @@ def run_tui(port: str = "COM6", baudrate: int = 2000000, max_frames: Optional[in
                         rx = ser.read(32)
                         t1 = time.perf_counter_ns()
                         if len(rx) == 32:
-                            last_rx_hex = rx[:10].hex(" ").upper() + " .. " + rx[28:].hex(" ").upper()
+                            last_rx_hex = (
+                                rx[:10].hex(" ").upper()
+                                + " .. "
+                                + rx[28:].hex(" ").upper()
+                            )
                             last_res = ResultFrame.from_bytes(rx)
                             valid_frames += 1
                             rtt_win.append((t1 - t0) / 1000.0)
-                            dsp_win.append(float((last_res.t_dsp_us - last_res.t_rx_us) & 0xFFFFFFFF))
-                            wcet_win.append(float((last_res.t_dec_us - last_res.t_rx_us) & 0xFFFFFFFF))
+                            dsp_win.append(
+                                float(
+                                    (last_res.t_dsp_us - last_res.t_rx_us) & 0xFFFFFFFF
+                                )
+                            )
+                            wcet_win.append(
+                                float(
+                                    (last_res.t_dec_us - last_res.t_rx_us) & 0xFFFFFFFF
+                                )
+                            )
                             if loop_on:
                                 if arm_idx == 0 and last_res.t_stim_us != 0:
                                     fired = True
-                                elif arm_idx == 1 and refrac == 0 and k_brain.rng.random() < 0.015:
+                                elif (
+                                    arm_idx == 1
+                                    and refrac == 0
+                                    and k_brain.rng.random() < 0.015
+                                ):
                                     fired = True
                                 elif arm_idx == 2 and (seq % 50 == 0):
                                     fired = True
@@ -358,15 +433,26 @@ def run_tui(port: str = "COM6", baudrate: int = 2000000, max_frames: Optional[in
                     refrac -= 1
 
                 if not loop_on and r_val < 0.88:
-                    k_brain.theta = np.mod(k_brain.theta - 0.016 * np.sin(k_brain.theta - psi_val), 2.0 * np.pi)
+                    k_brain.theta = np.mod(
+                        k_brain.theta - 0.016 * np.sin(k_brain.theta - psi_val),
+                        2.0 * np.pi,
+                    )
 
                 raw_hist.append(s1 / 1024.0)
                 bp_hist.append(bp_out.I_q15 / 1024.0)
                 if seq % 8 == 0:
                     r_hist.append(r_val)
 
-            hw_str = f"{C_GREEN}● LIVE ESP32-S3 ({port} @ 2M){C_RESET}" if hw_live else f"{C_AMBER}● IN-SILICO SIMULATOR{C_RESET}"
-            loop_str = f"{C_GREEN}[LOOP: ON  (SUPPRESSING)]{C_RESET}" if loop_on else f"{C_RED}[LOOP: OFF (ICTAL SURGE)]{C_RESET}"
+            hw_str = (
+                f"{C_GREEN}● LIVE ESP32-S3 ({port} @ 2M){C_RESET}"
+                if hw_live
+                else f"{C_AMBER}● IN-SILICO SIMULATOR{C_RESET}"
+            )
+            loop_str = (
+                f"{C_GREEN}[LOOP: ON  (SUPPRESSING)]{C_RESET}"
+                if loop_on
+                else f"{C_RED}[LOOP: OFF (ICTAL SURGE)]{C_RESET}"
+            )
             cur_r = r_val
             r_col = C_GREEN if cur_r < 0.35 else (C_AMBER if cur_r < 0.65 else C_RED)
             r_bar_len = int(np.clip(round(cur_r * 38), 0, 38))
@@ -379,8 +465,12 @@ def run_tui(port: str = "COM6", baudrate: int = 2000000, max_frames: Optional[in
             p50_wcet = float(np.percentile(wcet_win, 50))
 
             compass = render_phase_compass(psi_val, cur_r, fired_this_batch)
-            braille_r = render_braille_plot(list(r_hist), 0.0, 1.0, cols=52, rows=3, color=r_col, threshold_y=0.25)
-            snn_strip = render_snn_raster(bp_out.env_q15, bp_out.phase_q15, seq, width=35)
+            braille_r = render_braille_plot(
+                list(r_hist), 0.0, 1.0, cols=52, rows=3, color=r_col, threshold_y=0.25
+            )
+            snn_strip = render_snn_raster(
+                bp_out.env_q15, bp_out.phase_q15, seq, width=35
+            )
 
             header_title = pad_ansi(
                 f" ⚡ {C_BOLD}NEURAL LOOP TUI v2.0{C_RESET} │ $0 ESP32-S3 HIL Closed-Loop Edge Neuromodulation Workstation │ 2000 Hz Lockstep",
@@ -390,13 +480,43 @@ def run_tui(port: str = "COM6", baudrate: int = 2000000, max_frames: Optional[in
             rows = [
                 f"{C_BG_BAR}{header_title}{C_RESET}",
                 top_border,
-                make_row(f"{C_BOLD}LINK:{C_RESET} {hw_str}  {loop_str}", f"{C_BOLD}MODEL:{C_RESET} {C_CYAN}{model_names[model_idx]}{C_RESET}", w_l, w_r),
-                make_row(f"{C_BOLD}ARM :{C_RESET} {C_AMBER}{arm_names[arm_idx]}{C_RESET}  {C_BOLD}PULSES:{C_RESET} {pulses:3d}/300", f"{C_BOLD}VALID:{C_RESET} {valid_frames:6d} frames │ {C_GREEN}{crc_err:2d} CRC err{C_RESET}", w_l, w_r),
+                make_row(
+                    f"{C_BOLD}LINK:{C_RESET} {hw_str}  {loop_str}",
+                    f"{C_BOLD}MODEL:{C_RESET} {C_CYAN}{model_names[model_idx]}{C_RESET}",
+                    w_l,
+                    w_r,
+                ),
+                make_row(
+                    f"{C_BOLD}ARM :{C_RESET} {C_AMBER}{arm_names[arm_idx]}{C_RESET}  {C_BOLD}PULSES:{C_RESET} {pulses:3d}/300",
+                    f"{C_BOLD}VALID:{C_RESET} {valid_frames:6d} frames │ {C_GREEN}{crc_err:2d} CRC err{C_RESET}",
+                    w_l,
+                    w_r,
+                ),
                 mid_border,
-                make_row(f"{C_BOLD}[1] SIGNAL CHAIN — Raw LFP & 20ms Blanked Q15 Bandpass{C_RESET}", f"{C_BOLD}[2] 12-SECTOR PRC PHASE COMPASS{C_RESET}", w_l, w_r),
-                make_row(f"Raw LFP : {sparkline(list(raw_hist), -3.8, 3.8, 50, C_GRAY)}", compass[0], w_l, w_r),
-                make_row(f"Q15 I(t): {sparkline(list(bp_hist), -2.5, 2.5, 50, C_CYAN)}", compass[1], w_l, w_r),
-                make_row(f"64-N SNN: [{snn_strip}] {C_GREEN}99.2% sparse{C_RESET}", compass[2], w_l, w_r),
+                make_row(
+                    f"{C_BOLD}[1] SIGNAL CHAIN — Raw LFP & 20ms Blanked Q15 Bandpass{C_RESET}",
+                    f"{C_BOLD}[2] 12-SECTOR PRC PHASE COMPASS{C_RESET}",
+                    w_l,
+                    w_r,
+                ),
+                make_row(
+                    f"Raw LFP : {sparkline(list(raw_hist), -3.8, 3.8, 50, C_GRAY)}",
+                    compass[0],
+                    w_l,
+                    w_r,
+                ),
+                make_row(
+                    f"Q15 I(t): {sparkline(list(bp_hist), -2.5, 2.5, 50, C_CYAN)}",
+                    compass[1],
+                    w_l,
+                    w_r,
+                ),
+                make_row(
+                    f"64-N SNN: [{snn_strip}] {C_GREEN}99.2% sparse{C_RESET}",
+                    compass[2],
+                    w_l,
+                    w_r,
+                ),
                 make_row(
                     f"Blanking: {f'{C_AMBER}ACTIVE (40-samp=20ms){C_RESET}' if bp_out.blanked else f'{C_GREEN}IDLE (0 artifact){C_RESET}'} │ Env={bp_out.env_q15:4d} Q15",
                     compass[3],
@@ -404,15 +524,50 @@ def run_tui(port: str = "COM6", baudrate: int = 2000000, max_frames: Optional[in
                     w_r,
                 ),
                 f"├─{'─' * w_l}─┤ {pad_ansi(compass[4], w_r)} │",
-                make_row(f"{C_BOLD}[3] HERO — Real-Time Kuramoto Synchrony Collapse R(t){C_RESET}", compass[5], w_l, w_r),
-                make_row(f"R(t) Now: [{r_bar}] {r_col}{C_BOLD}{cur_r:0.4f}{C_RESET}", compass[6], w_l, w_r),
-                make_row(f"  1.00 ┤ {braille_r[0]}", f"ψ(t) = {C_CYAN}{psi_val:+6.3f} rad ({np.degrees(psi_val):+6.1f}°){C_RESET}", w_l, w_r),
+                make_row(
+                    f"{C_BOLD}[3] HERO — Real-Time Kuramoto Synchrony Collapse R(t){C_RESET}",
+                    compass[5],
+                    w_l,
+                    w_r,
+                ),
+                make_row(
+                    f"R(t) Now: [{r_bar}] {r_col}{C_BOLD}{cur_r:0.4f}{C_RESET}",
+                    compass[6],
+                    w_l,
+                    w_r,
+                ),
+                make_row(
+                    f"  1.00 ┤ {braille_r[0]}",
+                    f"ψ(t) = {C_CYAN}{psi_val:+6.3f} rad ({np.degrees(psi_val):+6.1f}°){C_RESET}",
+                    w_l,
+                    w_r,
+                ),
                 f"│ {pad_ansi(f'  0.50 ┤ {braille_r[1]}', w_l)} ├─{'─' * w_r}─┤",
-                make_row(f"  0.00 ┴ {braille_r[2]}", f"{C_BOLD}[4] ESP32-S3 HARDWARE TELEMETRY{C_RESET}", w_l, w_r),
+                make_row(
+                    f"  0.00 ┴ {braille_r[2]}",
+                    f"{C_BOLD}[4] ESP32-S3 HARDWARE TELEMETRY{C_RESET}",
+                    w_l,
+                    w_r,
+                ),
                 f"├─{'─' * w_l}─┤ {pad_ansi(f'USB RTT p50 : {C_CYAN}{p50_rtt:7.1f} µs{C_RESET} (< 2000 G0)', w_r)} │",
-                make_row(f"{C_BOLD}[5] 32-BYTE BINARY FRAME & MCU REGISTER INSPECTOR{C_RESET}", f"USB RTT p95 : {C_CYAN}{p95_rtt:7.1f} µs{C_RESET} (10.6° err)", w_l, w_r),
-                make_row(f"TX (32B): {C_GRAY}{last_tx_hex}{C_RESET}", f"USB RTT p99 : {C_CYAN}{p99_rtt:7.1f} µs{C_RESET} (< 5000)", w_l, w_r),
-                make_row(f"RX (32B): {C_CYAN}{last_rx_hex}{C_RESET}", f"MCU FIR DSP : {C_GREEN}{p50_dsp:7.1f} µs{C_RESET} (61-tap Q15)", w_l, w_r),
+                make_row(
+                    f"{C_BOLD}[5] 32-BYTE BINARY FRAME & MCU REGISTER INSPECTOR{C_RESET}",
+                    f"USB RTT p95 : {C_CYAN}{p95_rtt:7.1f} µs{C_RESET} (10.6° err)",
+                    w_l,
+                    w_r,
+                ),
+                make_row(
+                    f"TX (32B): {C_GRAY}{last_tx_hex}{C_RESET}",
+                    f"USB RTT p99 : {C_CYAN}{p99_rtt:7.1f} µs{C_RESET} (< 5000)",
+                    w_l,
+                    w_r,
+                ),
+                make_row(
+                    f"RX (32B): {C_CYAN}{last_rx_hex}{C_RESET}",
+                    f"MCU FIR DSP : {C_GREEN}{p50_dsp:7.1f} µs{C_RESET} (61-tap Q15)",
+                    w_l,
+                    w_r,
+                ),
                 make_row(
                     f"REGS    : seq={last_res.seq:<5d} st=0x{last_res.state:02X} cls={last_res.cls} conf={last_res.conf:<3d} φ_q15={last_res.phase_q15:<+6d}",
                     f"MCU SNN+FSM : {C_GREEN}{max(1.0, p50_wcet - p50_dsp):7.1f} µs{C_RESET} (64-N Int8)",
@@ -426,19 +581,26 @@ def run_tui(port: str = "COM6", baudrate: int = 2000000, max_frames: Optional[in
                     w_r,
                 ),
                 mid_border,
-                make_row(f"{C_BOLD}[6] REAL-TIME HARDWARE STIMULATION & EVENT LOG{C_RESET}", f"{C_BOLD}[7] SAFETY & GATES VERIFICATION{C_RESET}", w_l, w_r),
+                make_row(
+                    f"{C_BOLD}[6] REAL-TIME HARDWARE STIMULATION & EVENT LOG{C_RESET}",
+                    f"{C_BOLD}[7] SAFETY & GATES VERIFICATION{C_RESET}",
+                    w_l,
+                    w_r,
+                ),
             ]
 
             safety_lines = [
                 f"Interlocks  : {C_GREEN}CRC/REFRAC/BLANK=20ms OK{C_RESET}",
                 f"Fault Flags : {C_GREEN}0x00 (ZERO RUNAWAY){C_RESET}",
-                f"Gate G5/G6  : {C_CYAN}0.9998 SNN │ 53s Lead{C_RESET}",
+                f"Gate G5/G6  : {C_CYAN}SYNTHETIC 0.9998 │ 53s Lead (not CHB-MIT){C_RESET}",
                 f"Gate G7/G8  : {C_GREEN}ΔR=+0.746 [0.72, 0.78]{C_RESET}",
             ]
             for i in range(4):
                 ev = event_log[i] if i < len(event_log) else ""
                 ev_col = C_GREEN if "STIM" in ev else C_CYAN
-                rows.append(make_row(f"{ev_col}{ev}{C_RESET}", safety_lines[i], w_l, w_r))
+                rows.append(
+                    make_row(f"{ev_col}{ev}{C_RESET}", safety_lines[i], w_l, w_r)
+                )
 
             rows.append(bot_border)
             rows.append(
@@ -461,8 +623,14 @@ def run_tui(port: str = "COM6", baudrate: int = 2000000, max_frames: Optional[in
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Neural Loop btop-Style Terminal User Interface (TUI)")
-    parser.add_argument("--port", type=str, default="COM6", help="Serial port for ESP32-S3")
-    parser.add_argument("--frames", type=int, default=None, help="Run N batches and print TUI snapshot")
+    parser = argparse.ArgumentParser(
+        description="Neural Loop btop-Style Terminal User Interface (TUI)"
+    )
+    parser.add_argument(
+        "--port", type=str, default=None, help="Serial port for ESP32-S3 (auto-detect)"
+    )
+    parser.add_argument(
+        "--frames", type=int, default=None, help="Run N batches and print TUI snapshot"
+    )
     args = parser.parse_args()
     run_tui(port=args.port, max_frames=args.frames)

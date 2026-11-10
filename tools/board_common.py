@@ -23,19 +23,20 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_PORT = "COM6"
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from host.board import (  # noqa: E402
+    DEFAULT_PORT,
+    describe_ports,
+    normalize_mac,
+    parse_flash_id,
+    resolve_port,
+)
+
 DEFAULT_BAUD = 460800
 DEFAULT_FLASH_BYTES = 16 * 1024 * 1024  # ESP32-S3-WROOM-1-N16R8
 BACKUP_ROOT = REPO_ROOT / "backups"
-
-# USB bridges commonly used on ESP32 dev boards.
-_KNOWN_USB_IDS = {
-    "1A86:55D3": "WCH CH343 (ESP32-S3 DevKitC-1 UART port)",
-    "1A86:7523": "WCH CH340",
-    "10C4:EA60": "Silicon Labs CP210x",
-    "303A:1001": "Espressif native USB (USB-Serial-JTAG)",
-    "303A:4001": "Espressif native USB CDC",
-}
 
 
 def esptool_cmd() -> List[str]:
@@ -55,59 +56,6 @@ def force_utf8_stdout() -> None:
             stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
         except Exception:
             pass
-
-
-def resolve_port(preferred: Optional[str] = None) -> str:
-    """Resolve a serial port without guessing blindly.
-
-    Priority: explicit argument -> NL_PORT -> CH343 -> any known ESP32 bridge
-    -> COM6 fallback. The fallback is reported so the caller can warn.
-    """
-    if preferred:
-        return preferred
-    import os
-
-    env_port = os.environ.get("NL_PORT")
-    if env_port:
-        return env_port
-
-    try:
-        from serial.tools import list_ports
-    except Exception:  # pragma: no cover - pyserial is a hard dependency in practice
-        return DEFAULT_PORT
-
-    candidates = list(list_ports.comports())
-    for wanted in ("1A86:55D3",):
-        for p in candidates:
-            hwid = (p.hwid or "").upper()
-            if wanted in hwid:
-                return p.device
-    for p in candidates:
-        hwid = (p.hwid or "").upper()
-        if any(key in hwid for key in _KNOWN_USB_IDS):
-            return p.device
-    return DEFAULT_PORT
-
-
-def describe_ports() -> List[Dict[str, str]]:
-    """Return a JSON-friendly description of every serial port."""
-    try:
-        from serial.tools import list_ports
-    except Exception:  # pragma: no cover
-        return []
-    out: List[Dict[str, str]] = []
-    for p in list_ports.comports():
-        hwid = (p.hwid or "").upper()
-        note = next((v for k, v in _KNOWN_USB_IDS.items() if k in hwid), "")
-        out.append(
-            {
-                "device": p.device,
-                "description": p.description or "",
-                "hwid": p.hwid or "",
-                "note": note,
-            }
-        )
-    return out
 
 
 def run_esptool(
@@ -146,25 +94,6 @@ def run_esptool(
     return proc
 
 
-def parse_flash_id(output: str) -> Dict[str, Any]:
-    """Extract the useful facts from `esptool flash-id` output."""
-    facts: Dict[str, Any] = {}
-    patterns = {
-        "chip": r"Chip type:\s*(ESP32-[A-Z0-9]+)",
-        "chip_revision": r"revision (v?[0-9.]+)",
-        "mac": r"MAC:\s*([0-9a-fA-F:]{17})",
-        "manufacturer": r"Manufacturer:\s*(?:0x)?([0-9a-fA-F]+)",
-        "device": r"Device:\s*(?:0x)?([0-9a-fA-F]+)",
-        "flash_size": r"Detected flash size:\s*([0-9]+ ?[KMG]B)",
-        "flash_type": r"Flash type set in eFuse:\s*([^\r\n]+)",
-    }
-    for key, pattern in patterns.items():
-        match = re.search(pattern, output)
-        if match:
-            facts[key] = match.group(1).strip()
-    return facts
-
-
 def flash_size_bytes(label: Optional[str]) -> int:
     """Convert '16MB' / '8 MB' to bytes; fall back to the N16R8 size."""
     if not label:
@@ -184,10 +113,6 @@ def sha256_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
         for chunk in iter(lambda: fh.read(chunk_size), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def normalize_mac(value: Optional[str]) -> str:
-    return (value or "").strip().lower().replace("-", ":")
 
 
 def git_state() -> Dict[str, str]:

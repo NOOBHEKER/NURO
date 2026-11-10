@@ -1,15 +1,21 @@
 """nuro — Unified CLI for Neural Loop ($0 ESP32-S3 HIL Closed-Loop Testbed).
 
 Usage:
-  nuro                  # Launch interactive Native Terminal TUI (default)
+  nuro                  # Launch the interactive scientific calculator shell
   nuro tui              # Launch interactive Native Terminal TUI
   nuro web              # Launch 60 FPS Localhost TUI Workstation & open browser
-  nuro bench            # Run 1000-frame live HIL benchmark on COM6
-  nuro eval             # Run Gates G5 & G6 Detector & Predictor evaluations
-  nuro test             # Run 10/10 automated verification gate tests
-  nuro figures          # Regenerate all 9 publication figures (PNG + PDF)
-  nuro info             # Display connected ESP32-S3 hardware facts & status
+  nuro gui              # Launch live matplotlib cockpit
+  nuro bench            # Run 1000-frame live HIL benchmark (auto-detected port)
+  nuro eval             # Run Gates G5 & G6 on SYNTHETIC surrogates (not CHB-MIT)
+  nuro test             # Run the automated verification suite
+  nuro figures          # Regenerate all publication figures (PNG + PDF)
+  nuro info             # Probe the real board (read-only) and print its facts
+  nuro doctor           # Check the local environment and board readiness
+
+Port selection is centralised in host.board: --port > NURO_PORT > detected
+CH343/ESP32-S3 port > COM6 fallback.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -19,7 +25,11 @@ import webbrowser
 
 def handle_session_command(args: List[str]) -> str:
     """Manage named calculation sessions."""
-    from host.session_manager import get_active_session, set_active_session, list_sessions
+    from host.session_manager import (
+        get_active_session,
+        set_active_session,
+        list_sessions,
+    )
     from host.calc import C_BOLD, C_GREEN, C_CYAN, C_AMBER, C_RESET, C_WHITE, C_GRAY
 
     if not args or args[0].lower() in ("list", "status", "show", "current"):
@@ -31,9 +41,17 @@ def handle_session_command(args: List[str]) -> str:
             f"\n  {C_GRAY}All Available Sessions:{C_RESET}",
         ]
         for name, is_act, count, desc in sessions:
-            marker = f"{C_BOLD}{C_GREEN}▶ [ACTIVE]{C_RESET}" if is_act else f"  {C_GRAY}[      ]{C_RESET}"
-            out.append(f"  {marker} {C_WHITE}{name:<22}{C_RESET} ({count} calcs) {C_GRAY}{desc}{C_RESET}")
-        out.append(f"\n  {C_GRAY}Switch Session :{C_RESET} nuro session switch <name>  │  session <name>")
+            marker = (
+                f"{C_BOLD}{C_GREEN}▶ [ACTIVE]{C_RESET}"
+                if is_act
+                else f"  {C_GRAY}[      ]{C_RESET}"
+            )
+            out.append(
+                f"  {marker} {C_WHITE}{name:<22}{C_RESET} ({count} calcs) {C_GRAY}{desc}{C_RESET}"
+            )
+        out.append(
+            f"\n  {C_GRAY}Switch Session :{C_RESET} nuro session switch <name>  │  session <name>"
+        )
         return "\n".join(out)
 
     subcmd = args[0].lower()
@@ -52,6 +70,14 @@ def handle_session_command(args: List[str]) -> str:
 
 
 def main() -> None:
+    # Windows consoles default to cp1252 when redirected; the CLI uses Unicode
+    # symbols and the firmware banner uses a lightning bolt.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
     parser = argparse.ArgumentParser(
         prog="nuro",
         description="⚡ nuro — Unified CLI for Neural Loop ($0 ESP32-S3 Closed-Loop Testbed)",
@@ -61,67 +87,166 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command")
 
     # nuro tui
-    p_tui = sub.add_parser("tui", help="Launch interactive native terminal TUI (default)")
-    p_tui.add_argument("--port", default="COM6", help="Serial port (default: COM6)")
+    p_tui = sub.add_parser(
+        "tui", help="Launch interactive native terminal TUI (default)"
+    )
+    p_tui.add_argument(
+        "--port", default=None, help="Serial port (default: auto-detect, COM6 fallback)"
+    )
     p_tui.add_argument("--frames", type=int, default=None, help="Batch frame limit")
 
+    # nuro demo
+    p_demo = sub.add_parser(
+        "demo",
+        help="One-command showcase: web cockpit + TUI + matplotlib GUI",
+    )
+    p_demo.add_argument(
+        "--serial-port", default=None, help="Live serial port (default: auto-detect)"
+    )
+    p_demo.add_argument(
+        "--web-port", type=int, default=8765, help="Localhost web port (default: 8765)"
+    )
+    p_demo.add_argument(
+        "--frames", type=int, default=None, help="Stop the TUI after N batches"
+    )
+    p_demo.add_argument(
+        "--no-browser", action="store_true", help="Don't auto-open the browser"
+    )
+
     # nuro web
-    p_web = sub.add_parser("web", help="Launch 60 FPS localhost TUI cockpit & open browser")
-    p_web.add_argument("--port", default=8765, type=int, help="Web server port (default: 8765)")
-    p_web.add_argument("--serial-port", default="COM6", help="ESP32-S3 serial port (default: COM6)")
-    p_web.add_argument("--no-browser", action="store_true", help="Don't auto-open browser")
+    p_web = sub.add_parser(
+        "web", help="Launch 60 FPS localhost TUI cockpit & open browser"
+    )
+    p_web.add_argument(
+        "--port", default=8765, type=int, help="Web server port (default: 8765)"
+    )
+    p_web.add_argument(
+        "--serial-port",
+        default=None,
+        help="ESP32-S3 serial port (default: auto-detect, COM6 fallback)",
+    )
+    p_web.add_argument(
+        "--no-browser", action="store_true", help="Don't auto-open browser"
+    )
 
     # nuro gui
-    p_gui = sub.add_parser("gui", help="Launch live animated 4-panel interactive graphical window")
-    p_gui.add_argument("--port", default="COM6", help="Serial port (default: COM6)")
+    p_gui = sub.add_parser(
+        "gui", help="Launch live animated 4-panel interactive graphical window"
+    )
+    p_gui.add_argument(
+        "--port", default=None, help="Serial port (default: auto-detect, COM6 fallback)"
+    )
 
     # nuro bench
-    p_bench = sub.add_parser("bench", help="Run 1000-frame live hardware benchmark on COM6")
-    p_bench.add_argument("--frames", default=1000, type=int, help="Frame count (default: 1000)")
-    p_bench.add_argument("--port", default="COM6", help="Serial port (default: COM6)")
+    p_bench = sub.add_parser("bench", help="Run 1000-frame live hardware benchmark")
+    p_bench.add_argument(
+        "--frames", default=1000, type=int, help="Frame count (default: 1000)"
+    )
+    p_bench.add_argument(
+        "--port", default=None, help="Serial port (default: auto-detect, COM6 fallback)"
+    )
 
     # nuro eval
-    sub.add_parser("eval", help="Run Gates G5 & G6 Detector & Predictor evaluation")
+    sub.add_parser(
+        "eval", help="Run Gates G5 & G6 on synthetic surrogates (not CHB-MIT)"
+    )
 
     # nuro test
-    sub.add_parser("test", help="Run 10/10 automated pytest verification gates")
+    sub.add_parser("test", help="Run the automated pytest verification suite")
 
     # nuro figures
-    sub.add_parser("figures", help="Regenerate all 9 publication figures (PNG + PDF)")
+    sub.add_parser("figures", help="Regenerate all publication figures (PNG + PDF)")
 
     # nuro info
-    sub.add_parser("info", help="Probe and display live ESP32-S3 board facts on COM6")
+    p_info = sub.add_parser(
+        "info", help="Probe the real ESP32-S3 (read-only) and print its facts"
+    )
+    p_info.add_argument(
+        "--port", default=None, help="Serial port (default: auto-detect, COM6 fallback)"
+    )
+    p_info.add_argument("--json", action="store_true", help="Emit JSON instead of text")
+
+    # nuro doctor
+    p_doctor = sub.add_parser(
+        "doctor",
+        help="Check Python deps, board presence, firmware build and repo state",
+    )
+    p_doctor.add_argument(
+        "--port", default=None, help="Serial port (default: auto-detect, COM6 fallback)"
+    )
 
     # nuro calc (Interactive Scientific Graphing Calculator Shell or One-liner)
-    p_calc = sub.add_parser("calc", help="Whole Scientific Graphing Calculator & Calculus Engine")
-    p_calc.add_argument("query", nargs="*", help="Optional math expression, equation, or calculus question")
+    p_calc = sub.add_parser(
+        "calc", help="Whole Scientific Graphing Calculator & Calculus Engine"
+    )
+    p_calc.add_argument(
+        "query",
+        nargs="*",
+        help="Optional math expression, equation, or calculus question",
+    )
 
     # nuro chem (Advanced Chemistry Balancer & Numericals)
-    p_chem = sub.add_parser("chem", help="Chemistry Reaction Balancer, Molar Mass, pH & Kinetics")
-    p_chem.add_argument("query", nargs="*", help="Optional chemical equation, molar mass, pH, or kinetics query")
+    p_chem = sub.add_parser(
+        "chem", help="Chemistry Reaction Balancer, Molar Mass, pH & Kinetics"
+    )
+    p_chem.add_argument(
+        "query",
+        nargs="*",
+        help="Optional chemical equation, molar mass, pH, or kinetics query",
+    )
 
     # nuro phy (Over-the-Top Physics Simulation & Formulas)
-    p_phy = sub.add_parser("phy", help="Over-the-Top Physics Engine (Mechanics, RLC, Relativity, Quantum)")
-    p_phy.add_argument("query", nargs="*", help="Optional physics query (e.g. 'projectile v=50 angle=45')")
+    p_phy = sub.add_parser(
+        "phy", help="Over-the-Top Physics Engine (Mechanics, RLC, Relativity, Quantum)"
+    )
+    p_phy.add_argument(
+        "query",
+        nargs="*",
+        help="Optional physics query (e.g. 'projectile v=50 angle=45')",
+    )
 
     # nuro session (Manage & Switch Named Calculation Sessions)
-    p_session = sub.add_parser("session", help="Manage, list, and switch named calculation sessions")
-    p_session.add_argument("args", nargs="*", help="Subcommands: switch <name>, new <name>, list")
+    p_session = sub.add_parser(
+        "session", help="Manage, list, and switch named calculation sessions"
+    )
+    p_session.add_argument(
+        "args", nargs="*", help="Subcommands: switch <name>, new <name>, list"
+    )
 
     # nuro obsidian / graph (Open Obsidian Color-Coded Graph View of Session Calculations)
-    p_obs = sub.add_parser("obsidian", help="Sync & launch Obsidian interactive Color-Coded Graph View")
-    p_obs.add_argument("vault", nargs="*", help="Optional vault name in G:\\obsidian (e.g. 'ICSE Class 10')")
-    p_graph = sub.add_parser("graph", help="Sync & launch Obsidian interactive Color-Coded Graph View")
+    p_obs = sub.add_parser(
+        "obsidian", help="Sync & launch Obsidian interactive Color-Coded Graph View"
+    )
+    p_obs.add_argument(
+        "vault",
+        nargs="*",
+        help="Optional vault name in G:\\obsidian (e.g. 'ICSE Class 10')",
+    )
+    p_graph = sub.add_parser(
+        "graph", help="Sync & launch Obsidian interactive Color-Coded Graph View"
+    )
     p_graph.add_argument("vault", nargs="*", help="Optional vault name in G:\\obsidian")
 
     # nuro solve / math
-    p_solve = sub.add_parser("solve", help="Natural-language formula solver with Unicode graph")
-    p_solve.add_argument("query", nargs="+", help="Formula or question (e.g. 'sqrt of 16 times pi', 'sin(x)*exp(-x/5)')")
+    p_solve = sub.add_parser(
+        "solve", help="Natural-language formula solver with Unicode graph"
+    )
+    p_solve.add_argument(
+        "query",
+        nargs="+",
+        help="Formula or question (e.g. 'sqrt of 16 times pi', 'sin(x)*exp(-x/5)')",
+    )
 
     # nuro term / serial (Direct interactive serial terminal to ESP32-S3 hardware)
-    p_term = sub.add_parser("term", help="Interactive direct serial console to ESP32-S3 on COM6")
-    p_term.add_argument("--port", default="COM6", help="Serial port (default: COM6)")
-    p_term.add_argument("--baud", default=2000000, type=int, help="Baud rate (default: 2000000)")
+    p_term = sub.add_parser(
+        "term", help="Interactive direct serial console to ESP32-S3 on COM6"
+    )
+    p_term.add_argument(
+        "--port", default=None, help="Serial port (default: auto-detect, COM6 fallback)"
+    )
+    p_term.add_argument(
+        "--baud", default=2000000, type=int, help="Baud rate (default: 2000000)"
+    )
 
     args, unknown = parser.parse_known_args()
 
@@ -132,83 +257,150 @@ def main() -> None:
         if q_low.startswith("session"):
             print(handle_session_command(unknown[1:]))
             return
-        elif "->" in q_raw or "➔" in q_raw or any(w in q_low for w in ["molar mass", "titration", "kinetics", "kmno4"]):
+        elif (
+            "->" in q_raw
+            or "➔" in q_raw
+            or any(w in q_low for w in ["molar mass", "titration", "kinetics", "kmno4"])
+        ):
             from host.chem import solve_chem_numerical
+
             print(solve_chem_numerical(q_raw))
             return
-        elif any(w in q_low for w in ["projectile", "rlc", "relativity", "bohr", "blackbody", "photoelectric", "lorentz", "damping", "pascal", "hydraulic", "archimedes"]):
+        elif any(
+            w in q_low
+            for w in [
+                "projectile",
+                "rlc",
+                "relativity",
+                "bohr",
+                "blackbody",
+                "photoelectric",
+                "lorentz",
+                "damping",
+                "pascal",
+                "hydraulic",
+                "archimedes",
+            ]
+        ):
             from host.phy import solve_physics
+
             print(solve_physics(q_raw))
             return
         elif "obsidian" in q_low or "graph" in q_low or "vault" in q_low:
             from host.obsidian_sync import launch_obsidian_vault
+
             print(launch_obsidian_vault())
             return
         else:
             from host.calc import calculate_and_graph
+
             print(calculate_and_graph(q_raw))
             return
 
     cmd = args.command or "calc"
 
     if cmd == "tui":
+        from host.board import resolve_port
         from host.dash.tui import run_tui
-        port = getattr(args, "port", "COM6")
+
+        port = resolve_port(getattr(args, "port", None))
         frames = getattr(args, "frames", None)
+        print(f"[nuro] serial port: {port}")
         run_tui(port=port, max_frames=frames)
 
+    elif cmd == "demo":
+        from host.demo import run_demo
+
+        run_demo(
+            serial_port=getattr(args, "serial_port", None),
+            web_port=getattr(args, "web_port", 8765),
+            frames=getattr(args, "frames", None),
+            open_browser=not getattr(args, "no_browser", False),
+        )
+
     elif cmd == "web":
+        from host.board import resolve_port
         from host.dash.web_cockpit import run_web_cockpit
         import threading
+
         web_port = getattr(args, "port", 8765)
-        ser_port = getattr(args, "serial_port", "COM6")
+        ser_port = resolve_port(getattr(args, "serial_port", None))
         no_browse = getattr(args, "no_browser", False)
+        print(f"[nuro] serial port: {ser_port}")
 
         if not no_browse:
+
             def open_tab():
                 import time
+
                 time.sleep(0.8)
                 webbrowser.open(f"http://127.0.0.1:{web_port}")
+
             threading.Thread(target=open_tab, daemon=True).start()
 
         run_web_cockpit(port=web_port, serial_port=ser_port)
 
     elif cmd == "gui":
+        from host.board import resolve_port
         from host.dash.app import run_live_interactive_cockpit
-        port = getattr(args, "port", "COM6")
+
+        port = resolve_port(getattr(args, "port", None))
+        print(f"[nuro] serial port: {port}")
         run_live_interactive_cockpit(port=port)
 
     elif cmd == "bench":
+        from host.board import resolve_port
         from host.hil.transport import run_hil_benchmark
-        port = getattr(args, "port", "COM6")
+
+        port = resolve_port(getattr(args, "port", None))
         n_frames = getattr(args, "frames", 1000)
+        print(f"[nuro] serial port: {port}")
         res = run_hil_benchmark(port=port, n_frames=n_frames)
         import json
+
         print(json.dumps(res, indent=2))
 
     elif cmd == "eval":
-        from host.replay.predictor_eval import evaluate_gate_g5_detector, evaluate_gate_g6_predictor
+        from host.replay.predictor_eval import (
+            evaluate_gate_g5_detector,
+            evaluate_gate_g6_predictor,
+        )
         import json
+
         g5 = evaluate_gate_g5_detector()
         g6 = evaluate_gate_g6_predictor()
-        print("\n=== GATE G5: INT8 LIF SNN BURST DETECTOR ===")
+        print("\n=== SYNTHETIC SURROGATE EVALUATION — NOT CHB-MIT ===")
+        print("  These numbers come from signals generated inside the repo.")
+        print("  Real CHB-MIT EDF replay is Phase 2; do not cite as clinical data.")
+        print("\n=== GATE G5: INT8 LIF BURST DETECTOR (SYNTHETIC) ===")
         print(f"  Int8 LIF SNN AUROC       : {g5['auroc_int8_lif_snn']:.4f}")
         print(f"  Raw Amplitude Baseline   : {g5['auroc_amplitude_baseline']:.4f}")
         print(f"  Envelope Z-Score Baseline: {g5['auroc_envelope_z_baseline']:.4f}")
-        print(f"  Resting Spike Sparsity   : {g5['resting_spike_sparsity_pct']:.2f}% zero-spike")
-        print("\n=== GATE G6: DISJOINT PRE-ICTAL PREDICTOR ===")
-        print(f"  Mean Test AUROC (chb20-23) : {g6['summary']['mean_test_auroc']:.4f}")
-        print(f"  Median Lead Time Before Onset: {g6['summary']['median_lead_time_s']:.1f} s")
-        print(f"  False Alarms per Hour        : {g6['summary']['mean_fa_per_hour']:.3f} / hr")
+        print(
+            f"  Resting Spike Sparsity   : {g5['resting_spike_sparsity_pct']:.2f}% zero-spike"
+        )
+        print("\n=== GATE G6: PRE-ICTAL PREDICTOR (SYNTHETIC SURROGATE) ===")
+        print(
+            f"  Mean Test AUROC (synthetic chb20-23) : {g6['summary']['mean_test_auroc']:.4f}"
+        )
+        print(
+            f"  Median Lead Time Before Onset        : {g6['summary']['median_lead_time_s']:.1f} s"
+        )
+        print(
+            f"  False Alarms per Hour                : {g6['summary']['mean_fa_per_hour']:.3f} / hr"
+        )
+        print(f"  Model                                : {g6['model_architecture']}")
 
     elif cmd == "test":
         import pytest
         from pathlib import Path
+
         test_file = str(Path(__file__).resolve().parents[1] / "tests/test_suite.py")
         sys.exit(pytest.main(["-v", test_file]))
 
     elif cmd == "figures":
         from host.analysis.figures import generate_all_figures
+
         files = generate_all_figures()
         print(f"Successfully generated {len(files)} figure files (PNG + PDF):")
         for f in files:
@@ -216,6 +408,7 @@ def main() -> None:
 
     elif cmd == "calc":
         from host.calc import calculate_and_graph, run_calc_repl
+
         q_list = getattr(args, "query", [])
         if q_list:
             print(calculate_and_graph(" ".join(q_list)))
@@ -224,6 +417,7 @@ def main() -> None:
 
     elif cmd == "chem":
         from host.chem import solve_chem_numerical, run_chem_repl
+
         q_list = getattr(args, "query", [])
         if q_list:
             print(solve_chem_numerical(" ".join(q_list)))
@@ -232,6 +426,7 @@ def main() -> None:
 
     elif cmd == "phy":
         from host.phy import solve_physics, run_phy_repl
+
         q_list = getattr(args, "query", [])
         if q_list:
             print(solve_physics(" ".join(q_list)))
@@ -244,16 +439,22 @@ def main() -> None:
 
     elif cmd in ("obsidian", "graph"):
         from host.obsidian_sync import launch_obsidian_vault
+
         v_list = getattr(args, "vault", [])
         v_name = " ".join(v_list) if v_list else None
         print(launch_obsidian_vault(v_name))
 
     elif cmd in ("term", "serial"):
-        port = getattr(args, "port", "COM6")
+        from host.board import resolve_port
+
+        port = resolve_port(getattr(args, "port", None))
         baud = getattr(args, "baud", 2000000)
         import serial
         from serial.tools.miniterm import Miniterm
-        print(f"\033[1;36m[TERMINAL]\033[0m Connecting to ESP32-S3 on {port} @ {baud} baud (Press Ctrl+] to exit)...")
+
+        print(
+            f"\033[1;36m[TERMINAL]\033[0m Connecting to ESP32-S3 on {port} @ {baud} baud (Press Ctrl+] to exit)..."
+        )
         ser = serial.Serial(port, baud, timeout=0.1)
         term = Miniterm(ser, echo=False)
         term.set_rx_encoding("utf-8")
@@ -270,25 +471,27 @@ def main() -> None:
 
     elif cmd == "solve":
         from host.calc import calculate_and_graph
+
         query_str = " ".join(getattr(args, "query", []))
         print(calculate_and_graph(query_str))
 
     elif cmd == "info":
-        import serial
-        print("=== PROBING ESP32-S3 ON COM6 ===")
-        try:
-            ser = serial.Serial("COM6", 2000000, timeout=0.1)
-            ser.dtr = False
-            ser.rts = False
-            ser.close()
-            print("  Port       : COM6 (Available @ 2,000,000 baud)")
-            print("  Bridge     : WCH CH343 High-Speed USB Serial")
-            print("  Silicon    : ESP32-S3 (QFN56) rev v0.2")
-            print("  Module     : ESP32-S3-WROOM-1-N16R8 (16MB Flash, 8MB Octal PSRAM)")
-            print("  MAC        : 84:c7:bb:58:23:ec")
-            print("  Status     : READY for Hardware-in-the-Loop streaming")
-        except Exception as e:
-            print(f"  Port COM6 error: {e}")
+        import json as _json
+
+        from host.board import identity_summary, probe_identity
+
+        port = getattr(args, "port", None)
+        print(f"=== PROBING ESP32-S3 ON {port or 'AUTO-DETECTED PORT'} (READ-ONLY) ===")
+        facts = probe_identity(port)
+        if getattr(args, "json", False):
+            print(_json.dumps(facts, indent=2))
+        else:
+            print("\n".join(identity_summary(facts)))
+
+    elif cmd == "doctor":
+        from host.doctor import run_doctor
+
+        raise SystemExit(run_doctor(port=getattr(args, "port", None)))
 
 
 if __name__ == "__main__":
