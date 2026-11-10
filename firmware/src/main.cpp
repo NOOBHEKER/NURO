@@ -81,8 +81,14 @@ void nl_set_armed(bool armed) {
     }
 }
 
-/* Hysteresis & rate-limited LED updater (prevents 1000 Hz strobe flicker) */
-static void update_live_status_led(bool is_burst, bool triggered, uint16_t env, uint8_t spikes) {
+/* Hysteresis & rate-limited LED updater (prevents 1000 Hz strobe flicker)
+ * color_hint:
+ *   0 = Auto (derive from on-chip SNN & DSP)
+ *   1 = Green (calm resting / suppressed: matches TUI cur_r < 0.35)
+ *   2 = Yellow (coherence ramp / early warning: matches TUI 0.35 <= cur_r < 0.65)
+ *   3 = Red (burst / high synchrony: matches TUI cur_r >= 0.65)
+ */
+static void update_live_status_led(bool is_burst, bool triggered, uint16_t env, uint8_t spikes, uint8_t color_hint = 0) {
     uint32_t now = millis();
     uint8_t target_r = 0, target_g = 15, target_b = 0; // Default: calm resting Green
 
@@ -95,12 +101,22 @@ static void update_live_status_led(bool is_burst, bool triggered, uint16_t env, 
         target_r = 30; target_g = 0; target_b = 0;
     } else if (now < g_red_led_until_ms) {
         target_r = 30; target_g = 0; target_b = 0; // 🔴 RED: Burst Trigger Delivered
-    } else if (is_burst || env >= 220 || spikes >= 3) {
-        // Hold yellow for at least 150 ms so early warning coherence ramp is steady
+    } else if (color_hint == 2) {
+        // Explicit host yellow sync (matches TUI yellow when 0.35 <= cur_r < 0.65)
         g_yellow_led_until_ms = now + 150;
-        target_r = 20; target_g = 20; target_b = 0; // 🟡 YELLOW: Early Warning Ramp
+        target_r = 25; target_g = 20; target_b = 0; // 🟡 YELLOW
     } else if (now < g_yellow_led_until_ms) {
-        target_r = 20; target_g = 20; target_b = 0; // 🟡 YELLOW latch
+        target_r = 25; target_g = 20; target_b = 0; // 🟡 YELLOW latch
+    } else if (color_hint == 1) {
+        // Explicit host green sync (matches TUI green when cur_r < 0.35)
+        target_r = 0; target_g = 15; target_b = 0;  // 🟢 GREEN
+    } else if (color_hint == 3 || is_burst) {
+        // Explicit host red sync or on-chip detected burst
+        target_r = 30; target_g = 0; target_b = 0;  // 🔴 RED
+    } else if (env >= 220 || spikes >= 3) {
+        // On-chip early warning coherence ramp
+        g_yellow_led_until_ms = now + 150;
+        target_r = 25; target_g = 20; target_b = 0; // 🟡 YELLOW
     } else {
         target_r = 0; target_g = 15; target_b = 0;  // 🟢 GREEN: Calm Resting State
     }
@@ -323,6 +339,15 @@ void loop() {
     /* 0. Feed the watchdog once per scheduler pass */
     esp_task_wdt_reset();
 
+    /* 0. Idle / Static LED refresh:
+     * When no frames are arriving, decay physical LED back to calm resting Green
+     * (or Blue if disarmed) once the Red (250ms) and Yellow (150ms) latches expire.
+     */
+    uint32_t now_idle = millis();
+    if (now_idle >= g_red_led_until_ms && now_idle >= g_yellow_led_until_ms && (now_idle - g_last_led_update_ms >= 50)) {
+        update_live_status_led(false, false, 0, 0, 0);
+    }
+
     /* 1. Demultiplex incoming bytes:
      *    - If byte is ASCII, route immediately to interactive Pocket Lab REPL.
      *    - If magic 0xC3, 0xA5 arrives, accumulate full 32-byte binary DSP frame.
@@ -432,7 +457,8 @@ void loop() {
         }
 
         /* Update WS2812 RGB LED with 250ms hold latch & rate-limiting (prevents rapid strobing) */
-        update_live_status_led(is_burst, triggered, dsp_out1.env_q15, spike_count);
+        uint8_t color_hint = (in_frame->flags >> 4) & 0x03U;
+        update_live_status_led(is_burst, triggered, dsp_out1.env_q15, spike_count, color_hint);
 
         nl_result_frame_t out_frame;
         out_frame.magic       = NL_MAGIC_RESULT;

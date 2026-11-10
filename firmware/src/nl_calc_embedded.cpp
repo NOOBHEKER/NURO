@@ -477,7 +477,8 @@ void nl_calc_exec_command(const char *cmd_line) {
         nl_run_sim_burst();
     } else if (strcmp(cmd, "rest") == 0) {
         nl_run_sim_rest();
-    } else if (strcmp(cmd, "status") == 0) {
+    } else if (strcmp(cmd, "status") == 0 || strcmp(cmd, "static") == 0) {
+        nl_set_status_led(0, nl_is_armed() ? 15 : 0, nl_is_armed() ? 0 : 15);
         Serial.println("\r\n=======================================================");
         Serial.println("⚡ ESP32-S3 SYSTEM HARDWARE STATUS");
         Serial.println("=======================================================");

@@ -88,7 +88,9 @@ def main() -> None:
 
     # nuro tui
     p_tui = sub.add_parser(
-        "tui", help="Launch interactive native terminal TUI (default)"
+        "tui",
+        aliases=["neural", "mneuro", "live"],
+        help="Launch interactive native terminal TUI (default)",
     )
     p_tui.add_argument(
         "--port", default=None, help="Serial port (default: auto-detect, COM6 fallback)"
@@ -299,7 +301,7 @@ def main() -> None:
 
     cmd = args.command or "calc"
 
-    if cmd == "tui":
+    if cmd in ("tui", "neural", "mneuro", "live"):
         from host.board import resolve_port
         from host.dash.tui import run_tui
 

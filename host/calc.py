@@ -384,8 +384,28 @@ def calculate_and_graph(
     if q_clean_low in ("obsidian", "graph", "vault", "sync"):
         return launch_obsidian_vault(target_vault)
 
-    # Live Animated Graphs: "tui", "live", "animated", "oscilloscope", "live graph", "animated graph"
-    if q_clean_low in (
+    # Strip leading nuro / mneuro wrapper if typed inside shell (e.g. "nuro neural" or "mneuro neural")
+    q_cmd = re.sub(r"^(?:nuro|mneuro)\s+", "", q_clean_low).strip()
+
+    # Help / Command reference
+    if q_cmd in ("help", "?", "commands", "menu"):
+        return (
+            f"\n{C_BOLD}{C_CYAN}╔═══════════════════════════════════════════════════════════════╗{C_RESET}\n"
+            f"{C_BOLD}{C_CYAN}║     ⚡ nuro — All-In-One Interactive Commands Reference       ║{C_RESET}\n"
+            f"{C_BOLD}{C_CYAN}╚═══════════════════════════════════════════════════════════════╝{C_RESET}\n"
+            f"  {C_CYAN}Math     :{C_RESET} quad 1 -5 6 │ 5*3 + 10 │ x^2 - 5x + 6 = 0 │ diff sin(x) │ integrate x^2\n"
+            f"  {C_AMBER}Physics  :{C_RESET} pascal 50 0.01 0.5 │ projectile v=50 angle=45 │ rlc R=5 L=50 C=100\n"
+            f"  {C_GREEN}Chemistry:{C_RESET} mass C6H12O6 │ KMnO4 + HCl -> KCl + MnCl2 + H2O + Cl2 │ ph 0.01\n"
+            f"  {C_PURPLE}Neural   :{C_RESET} neural / live / tui (animated 60 FPS graph) │ burst (trigger test) │ status / neuro (telemetry)\n"
+            f"  {C_WHITE}Obsidian :{C_RESET} session switch <name> │ to obsidian [vault] │ obsidian\n"
+        )
+
+    # Live Animated Graphs: "neural", "mneuro", "tui", "live", "animated", "oscilloscope", "live graph", "animated graph", "neural loop", "loop"
+    if q_cmd in (
+        "neural",
+        "mneuro",
+        "m-neuro",
+        "m_neuro",
         "tui",
         "live",
         "animated",
@@ -394,6 +414,9 @@ def calculate_and_graph(
         "graph live",
         "live graph",
         "animated graph",
+        "neural graph",
+        "neural loop",
+        "loop",
     ):
         from host.board import resolve_port
         from host.dash.tui import run_tui
@@ -404,7 +427,7 @@ def calculate_and_graph(
         except Exception as e:
             return f"{C_AMBER}[TUI ERROR]: {e}{C_RESET}"
 
-    if q_clean_low in ("gui", "cockpit", "window"):
+    if q_cmd in ("gui", "cockpit", "window"):
         from host.board import resolve_port
         from host.dash.app import run_live_interactive_cockpit
 
@@ -431,17 +454,17 @@ def calculate_and_graph(
         a_v, b_v, c_v = m_quad.group(1), m_quad.group(2), m_quad.group(3)
         q_clean = f"{a_v}*x^2 + ({b_v})*x + ({c_v}) = 0"
         q_clean_low = q_clean.lower()
+        q_cmd = q_clean_low
 
     # Neural & Hardware direct queries: neuro, sim burst, sim rest, status, neural burst, etc.
     hw_target = None
-    q_hw = re.sub(r"^nuro\s+", "", q_clean_low).strip()
-    if any(k in q_hw for k in ["burst", "seizure", "epilep", "stim"]):
+    if any(k in q_cmd for k in ["burst", "seizure", "epilep", "stim"]):
         hw_target = "sim burst"
-    elif q_hw in ("neural", "neuro", "telemetry", "brain", "dsp"):
+    elif q_cmd in ("neuro", "telemetry", "brain", "dsp"):
         hw_target = "neuro"
-    elif q_hw in ("rest", "sim rest", "reset"):
+    elif q_cmd in ("rest", "sim rest", "reset"):
         hw_target = "sim rest"
-    elif q_hw in ("status", "hw", "hardware"):
+    elif q_cmd in ("status", "static", "hw", "hardware"):
         hw_target = "status"
 
     if hw_target:
@@ -842,7 +865,18 @@ def calculate_and_graph(
         )
     else:
         # Pure Numerical / Symbolic Scalar calculation!
-        val_eval = sym_expr.evalf()
+        try:
+            val_eval = sym_expr.evalf()
+            c_val = float(val_eval)
+        except Exception:
+            return (
+                f"{C_AMBER}[CALC]: '{q_clean}' is not recognized as a number or known command.{C_RESET}\n"
+                f"{C_GRAY}• For live animated neural graph : type {C_GREEN}neural{C_RESET} or {C_GREEN}live{C_RESET}\n"
+                f"• For burst stimulation test     : type {C_GREEN}burst{C_RESET}\n"
+                f"• For hardware telemetry         : type {C_GREEN}neuro{C_RESET} or {C_GREEN}status{C_RESET}\n"
+                f"• For command list               : type {C_GREEN}help{C_RESET}\n"
+                f"• For math plotting              : use 'x' as variable (e.g. sin(x)){C_RESET}"
+            )
         out.append(
             f"{C_BOLD}{C_GREEN}⚡ SCIENTIFIC CALCULATION:{C_RESET} {C_WHITE}{clean_math_signs(q_clean)}{C_RESET}"
         )
@@ -850,14 +884,13 @@ def calculate_and_graph(
             f"  {C_GRAY}Symbolic Form :{C_RESET} {C_CYAN}{clean_math_signs(str(sym_expr))}{C_RESET}"
         )
         out.append(
-            f"  {C_BOLD}{C_GREEN}Exact Decimal :{C_RESET} {C_WHITE}{float(val_eval):+16.10f}{C_RESET}"
+            f"  {C_BOLD}{C_GREEN}Exact Decimal :{C_RESET} {C_WHITE}{c_val:+16.10f}{C_RESET}"
         )
         out.append(
-            f"  {C_GRAY}Scientific    :{C_RESET} {C_AMBER}{float(val_eval):.8e}{C_RESET}"
+            f"  {C_GRAY}Scientific    :{C_RESET} {C_AMBER}{c_val:.8e}{C_RESET}"
         )
 
         # Quick neighborhood visualization
-        c_val = float(val_eval)
         d_val = max(1.0, abs(c_val) * 0.5)
         xs = np.linspace(c_val - d_val, c_val + d_val, 100)
         out.append(
@@ -926,7 +959,7 @@ def run_calc_repl() -> None:
         f"  {C_GREEN}Chemistry:{C_RESET} mass C6H12O6 │ KMnO4 + HCl -> KCl + MnCl2 + H2O + Cl2 │ ph 0.01"
     )
     print(
-        f"  {C_PURPLE}Neural   :{C_RESET} live / tui (animated 60 FPS graph) │ burst (trigger test) │ neuro (telemetry)"
+        f"  {C_PURPLE}Neural   :{C_RESET} neural / live / tui (animated 60 FPS graph) │ burst (trigger test) │ status / neuro (telemetry)"
     )
     print(
         f"  {C_WHITE}Obsidian :{C_RESET} session switch <name> │ to obsidian [vault] │ obsidian\n"

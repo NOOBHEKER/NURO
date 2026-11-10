@@ -924,12 +924,13 @@ class TuiCockpitEngine:
                 self.phase_q15 = bp_out.phase_q15
                 fired = False
 
+                host_color = 0x10 if r_val < 0.35 else (0x20 if r_val < 0.65 else 0x30)
                 sf = SampleFrame(
                     seq=self.seq,
                     sim_t_us=self.seq * 1000,
                     host_t_us=host_monotonic_us(),
                     samples=(s0, s1, 0, 0),
-                    flags=0x03,
+                    flags=0x03 | host_color,
                     n_ch=1,
                     n_samp=2,
                     mode=MODE_LOCKSTEP,

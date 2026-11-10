@@ -353,12 +353,13 @@ def run_tui(
                 bp_out = dsp.step(s1)
                 fired = False
 
+                host_color = 0x10 if r_val < 0.35 else (0x20 if r_val < 0.65 else 0x30)
                 sf = SampleFrame(
                     seq=seq,
                     sim_t_us=seq * 1000,
                     host_t_us=host_monotonic_us(),
                     samples=(s0, s1, 0, 0),
-                    flags=0x03,
+                    flags=0x03 | host_color,
                     n_ch=1,
                     n_samp=2,
                     mode=MODE_LOCKSTEP,
@@ -619,6 +620,11 @@ def run_tui(
         if max_frames is None:
             sys.stdout.write("\033[?25h\n")
         if ser is not None and ser.is_open:
+            try:
+                ser.write(b"rest\r\n")
+                time.sleep(0.05)
+            except Exception:
+                pass
             ser.close()
 
 
