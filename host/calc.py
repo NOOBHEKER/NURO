@@ -189,15 +189,26 @@ def calculate_and_graph(query: str, domain: Optional[Tuple[float, float]] = None
         q_clean = f"{a_v}*x^2 + ({b_v})*x + ({c_v}) = 0"
         q_clean_low = q_clean.lower()
 
-    # Neural & Hardware direct queries on COM6: neuro, sim burst, sim rest, status
-    if q_clean_low in ("neuro", "sim burst", "burst", "sim rest", "status"):
+    # Neural & Hardware direct queries on COM6: neuro, sim burst, sim rest, status, neural burst, etc.
+    hw_target = None
+    q_hw = re.sub(r"^nuro\s+", "", q_clean_low).strip()
+    if any(k in q_hw for k in ["burst", "seizure", "epilep", "stim"]):
+        hw_target = "sim burst"
+    elif q_hw in ("neural", "neuro", "telemetry", "brain", "dsp"):
+        hw_target = "neuro"
+    elif q_hw in ("rest", "sim rest", "reset"):
+        hw_target = "sim rest"
+    elif q_hw in ("status", "hw", "hardware"):
+        hw_target = "status"
+
+    if hw_target:
         try:
             import serial
             import time
             with serial.Serial("COM6", 2000000, timeout=1.5) as ser:
                 time.sleep(0.05)
                 ser.reset_input_buffer()
-                ser.write(f"{q_clean}\r\n".encode("ascii"))
+                ser.write(f"{hw_target}\r\n".encode("ascii"))
                 time.sleep(0.4)
                 resp = ser.read_all().decode("utf-8", errors="replace")
                 lines = [l for l in resp.splitlines() if not l.strip().startswith("esp32-s3>")]
@@ -450,7 +461,7 @@ def run_calc_repl() -> None:
     print(f"  {C_CYAN}Math     :{C_RESET} quad 1 -5 6 │ 5*3 + 10 │ x^2 - 5x + 6 = 0 │ diff sin(x) │ integrate x^2")
     print(f"  {C_AMBER}Physics  :{C_RESET} pascal 50 0.01 0.5 │ projectile v=50 angle=45 │ rlc R=5 L=50 C=100")
     print(f"  {C_GREEN}Chemistry:{C_RESET} mass C6H12O6 │ KMnO4 + HCl -> KCl + MnCl2 + H2O + Cl2 │ ph 0.01")
-    print(f"  {C_PURPLE}Neural   :{C_RESET} neuro │ sim burst │ status (ESP32-S3 hardware on COM6)")
+    print(f"  {C_PURPLE}Neural   :{C_RESET} burst (trigger test) │ neuro (telemetry) │ sim rest (ESP32-S3 hardware on COM6)")
     print(f"  {C_WHITE}Obsidian :{C_RESET} session switch <name> │ to obsidian [vault] │ obsidian\n")
 
     while True:
