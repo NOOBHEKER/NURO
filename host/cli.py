@@ -228,6 +228,28 @@ def main() -> None:
         "--port", default=None, help="Serial port (default: auto-detect)"
     )
 
+    # nuro watch / pnp
+    p_watch = sub.add_parser(
+        "watch",
+        aliases=["pnp", "plug-and-play", "autolaunch"],
+        help="Background plug-and-play watcher: auto-launch TUI when ESP32-S3 is plugged in",
+    )
+    p_watch.add_argument(
+        "--install", action="store_true", help="Install silent watcher into Windows Startup"
+    )
+    p_watch.add_argument(
+        "--uninstall", action="store_true", help="Remove silent watcher from Windows Startup"
+    )
+    p_watch.add_argument(
+        "--silent", action="store_true", help="Run without printing console logs"
+    )
+    p_watch.add_argument(
+        "--once", action="store_true", help="Check once and exit immediately"
+    )
+    p_watch.add_argument(
+        "--interval", type=float, default=1.0, help="Poll interval in seconds (default: 1.0s)"
+    )
+
     # nuro calc (Interactive Scientific Graphing Calculator Shell or One-liner)
     p_calc = sub.add_parser(
         "calc", help="Whole Scientific Graphing Calculator & Calculus Engine"
@@ -567,6 +589,19 @@ def main() -> None:
         from host.doctor import run_doctor
 
         raise SystemExit(run_doctor(port=getattr(args, "port", None)))
+
+    elif cmd in ("watch", "pnp", "plug-and-play", "autolaunch"):
+        from host.watch import run_watcher
+
+        sys.exit(
+            run_watcher(
+                poll_interval=getattr(args, "interval", 1.0),
+                install=getattr(args, "install", False),
+                uninstall=getattr(args, "uninstall", False),
+                silent=getattr(args, "silent", False),
+                once=getattr(args, "once", False),
+            )
+        )
 
 
 if __name__ == "__main__":

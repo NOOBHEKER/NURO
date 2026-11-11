@@ -1,178 +1,90 @@
-# Plug and play — run this on any computer
+# Plug & Play & Safety Architecture
 
-The board is not tied to one machine or one COM port. Detection happens on the
-host, the port is never hardcoded, and flashing does not pin a port either.
+## 1. Safety Architecture
 
-This page is the whole procedure for a **fresh computer**.
+The **Neural Loop** closed-loop neuromodulation system implements multi-tier hardware and software safety interlocks:
 
----
-
-## 1. Copy the repository
-
-Clone it, or copy the `neural-loop` folder. Any path works — no drive letters
-are assumed.
-
-```text
-neural-loop\
-├── setup.cmd      ← Windows: double-click or run
-├── setup.ps1      ← Windows: PowerShell version
-├── setup.sh       ← Linux / macOS
-└── host\
-```
-
-## 2. Bootstrap once
-
-**Windows (double-click or terminal):**
-
-```powershell
-cd "C:\path\to\neural-loop"
-.\setup.cmd
-# or: powershell -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1
-```
-
-**Linux / macOS:**
-
-```bash
-cd /path/to/neural-loop
-chmod +x setup.sh
-./setup.sh
-```
-
-`setup` checks for Python 3.10+, creates `.venv`, installs the project in
-editable mode, and runs `nuro doctor`. It never opens the serial port and never
-touches the board. The first run downloads the dependencies (numpy, matplotlib,
-pyserial, sympy, esptool, pytest, PlatformIO), so it needs internet once.
-
-## 3. Put `nuro` on PATH (once per computer)
-
-**Windows:**
-
-```powershell
-.\install.ps1 -Apply
-# open a new terminal afterwards
-```
-
-**Linux / macOS** — add one line to `~/.bashrc` or `~/.zshrc`:
-
-```bash
-export PATH="/path/to/neural-loop/.venv/bin:$PATH"
-```
-
-Then, from **any** directory:
-
-```powershell
-nuro demo
-```
+| Safety Interlock | Mechanism | Parameter / Behavior |
+| :--- | :--- | :--- |
+| **Boot-Disarmed Gate** | Firmware software gate | Board boots into `g_armed = false` with dim 🔵 **Blue LED** (`0, 0, 15`). GPIO 4 stimulation pulses are physically disabled until explicit host handshake or `arm` command. |
+| **Session Pulse Budget** | Hardware pulse counter | Strict limit of **300 pulses** per session. Once consumed, the hardware controller refuses all stimulation requests (`g_budget_used < 300`). |
+| **Refractory Period** | Timing interlock | Hard minimum delay of **$\ge 15\text{ ms}$** between consecutive pulses (`(t_dec - g_last_stim_us) >= 15000U`). Prevents rapid strobing or seizure kindling. |
+| **Artifact Blanking** | FIR DSP feedback suppression | **$20\text{ ms}$** ($40\text{ samples}$ @ $2000\text{ Hz}$) stimulation artifact blanking window. During blanking, inputs are zero-filled to prevent stimulus self-feedback runaway. |
+| **Hardware Watchdog** | ESP-IDF Task Watchdog | **$5.0\text{ s}$** `esp_task_wdt`. Auto-resets the MCU safely if the main processing loop ever hangs. |
+| **Hot-Unplug Protection** | Host serial exception handler | If the USB cable is disconnected mid-session, the TUI catches the disconnect, cleanly falls back to safe in-silico simulation, and continuously polls for reconnection without crashing. |
+| **Static LED Rest Decay** | WS2812 firmware scheduler | When static (idle/resting/no frames), physical LED decays back to calm 🟢 **Green** (`0, 15, 0`) or 🔵 **Blue** (`0, 0, 15`) once the $250\text{ ms}$ pulse latch expires. Never stays stuck on Red. |
+| **Safe Exit Handshake** | Host `finally:` handler | When the TUI exits (pressing `q` or `Ctrl+C`), it transmits `b"rest\r\n"` before closing the COM port, ensuring the ESP32-S3 sits in solid resting Green. |
+| **Firmware Integrity** | Dual-image OTA & full backup | Verified 16 MB full-flash backup stored at `backups/20261110_203223/flash.bin` (SHA-256 `9f4f013c0cf6ba85...`). |
 
 ---
 
-## What "plug and play" actually means here
+## 2. Plug & Play Architecture
 
-| Piece | How it is portable |
-|---|---|
-| **Port** | `host/board.py` ranks every serial port by USB VID:PID and name: CH343 → native ESP32-S3 USB → CP210x → CH340. No `COM6` in any code path except the last-resort Windows fallback. |
-| **Port override** | `--port COM7`, or set `NURO_PORT` once and every command uses it. |
-| **Launcher** | `setup` installs a real console script (`.venv\Scripts\nuro.exe` or `.venv/bin/nuro`), so `nuro` works from any directory. |
-| **Paths** | Nothing in the host code assumes `G:\`. The Obsidian root is `NURO_OBSIDIAN_ROOT`, otherwise `G:\obsidian` if it exists, otherwise `~/obsidian`. |
-| **Firmware** | `platformio.ini` no longer pins `upload_port` / `monitor_port`; PlatformIO auto-detects. Override with `--upload-port COM7`. |
-| **No board** | `nuro tui`, `nuro web`, `nuro gui` and `nuro demo` fall back to an explicitly labelled in-silico mirror instead of crashing. |
+### Automatic Port Discovery
+The project enforces a single-port policy in [`host/board.py`](file:///G:/MIT%20Planner/mit/neural-loop/host/board.py). On any desktop, ports are automatically scored by USB VID:PID:
+1. `1A86:55D3` / `1A86:55D4` — WCH CH343 high-speed UART bridge (ESP32-S3 DevKitC-1 v1.3 default) $\to$ **Score 100**
+2. `303A:1001` / `303A:4001` — Espressif USB-Serial-JTAG / Native CDC $\to$ **Score 90**
+3. `10C4:EA60` — Silicon Labs CP210x $\to$ **Score 60**
+4. `1A86:7523` — WCH CH340 $\to$ **Score 50**
 
-Resolution order, in one line:
-
-```text
---port  >  NURO_PORT / NL_PORT  >  auto-detected ESP32-S3 bridge  >  COM6 (Windows only)
-```
+No hardcoded `COM6` is required on other desktops: the board is automatically detected regardless of assigned port (`COM3`, `COM4`, `COM7`, `/dev/ttyUSB0`, etc.).
 
 ---
 
-## Which USB port on the board?
-
-The ESP32-S3-DevKitC-1 has two USB-C ports.
-
-| Port | Silkscreen | Host sees | Use it for |
-|---|---|---|---|
-| **UART** | `UART` | **WCH CH343** (`1A86:55D3`) as `COMx` | **The testbed.** 2 Mbps HIL, `nuro info`, `nuro bench`, `nuro term`. Needs the WCH driver on Windows. |
-| **Native USB** | `USB` | Espressif USB-Serial-JTAG (`303A:1001`) | Flashing and debugging without the bridge. **Not** the HIL link with the current firmware: `Serial` is UART0, so `nuro tui`/`bench` need the UART port. |
-
-Both ports are auto-detected. The UART bridge wins because it carries the
-firmware's `Serial` stream at 2 Mbps. If only the native USB port is plugged
-in, `nuro doctor` says so explicitly and tells you to use the UART port.
-
-### Drivers
-
-| OS | What to install |
-|---|---|
-| Windows 10/11 | **WCH CH343 driver** — <https://www.wch-ic.com/downloads/CH343SER_ZIP.html>. Without it, no `COMx` appears and `nuro doctor` says "no serial ports found". |
-| Linux | Usually built in (`ch341`, `cdc_acm`). Add your user to `dialout`: `sudo usermod -aG dialout $USER`, then log out and back in. |
-| macOS | Usually built in. No driver needed for CH343 on modern macOS; the port shows as `/dev/cu.usbserial-*` or `/dev/cu.wchusbserial*`. |
-
-Use a **data-capable** USB-C cable. Charge-only cables enumerate nothing.
+### Dynamic Hot-Plug Inside TUI
+Inside [`host/dash/tui.py`](file:///G:/MIT%20Planner/mit/neural-loop/host/dash/tui.py):
+- **Start Without Board:** The TUI launches immediately in in-silico Kuramoto/Jansen-Rit simulation mode, displaying:
+  `LINK: ● IN-SILICO (PnP Auto-Detect)`.
+- **Insert Board:** The 1 Hz hotplug probe automatically discovers the ESP32-S3 on whichever USB port it is plugged into, establishes the 2 Mbps lockstep link, and switches to:
+  `LINK: ● LIVE ESP32-S3 (COMx @ 2M)` with `[HOTPLUG] Board detected on COMx -> LIVE HIL connected!`.
+- **Remove Board:** If unplugged, the TUI catches the disconnection, closes the serial handle, and gracefully reverts to in-silico simulation mode with `[HOTPLUG] Board disconnected -> In-silico fallback`.
+- **Re-insert Board:** Automatically reconnects within 1 second.
 
 ---
 
-## Verify
+### Windows Plug & Play Auto-Launcher (`nuro watch`)
+You can have the TUI automatically pop up the moment you plug in your ESP32-S3 into the computer:
 
-```powershell
-nuro doctor     # environment, PATH, drivers, board, backup, git
-nuro info       # read-only chip/MAC/flash/PSRAM probe
-nuro demo       # web cockpit + TUI + matplotlib GUI
-```
+1. **Install into Windows Startup (Runs silently on boot):**
+   ```powershell
+   nuro watch --install
+   ```
+   This creates a silent VBScript in `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\NeuralLoop_PlugAndPlay.vbs`.
+   Whenever you plug your ESP32-S3 into ANY USB port on your desktop, a console window automatically opens with the live animated 60 FPS TUI!
 
-Expected board facts for this unit:
+2. **Run Interactively in Terminal:**
+   ```powershell
+   nuro watch
+   ```
 
-```text
-Chip   : ESP32-S3 rev v0.2
-Flash  : 16MB
-PSRAM  : 8 MB octal
-MAC    : 84:c7:bb:58:23:ec
-```
+3. **Uninstall from Startup:**
+   ```powershell
+   nuro watch --uninstall
+   ```
 
-Any other N16R8 board works too — only the MAC differs.
-
----
-
-## Flashing from another computer
-
-The firmware build is self-contained (PlatformIO downloads the toolchain on the
-first build), and the port is auto-detected:
-
-```powershell
-python -m platformio run -d firmware -t upload
-# explicit port if you have several boards:
-python -m platformio run -d firmware -t upload --upload-port COM7
-```
-
-> [!warning] Board safety
-> Read [`RECOVERY.md`](RECOVERY.md) first. This repository's verified full-flash
-> backup lives on the original machine, under `backups/` (git-ignored). On a new
-> computer, take a fresh backup **before** flashing anything:
-> `python tools/board_backup.py`.
+4. **One-Click Shortcuts:**
+   - Double-click [`Plug_and_Play_TUI.cmd`](file:///G:/MIT%20Planner/mit/neural-loop/Plug_and_Play_TUI.cmd) to start the TUI immediately (connects live or in-silico).
+   - Double-click [`Plug_and_Play_Watcher.cmd`](file:///G:/MIT%20Planner/mit/neural-loop/Plug_and_Play_Watcher.cmd) to run the USB watcher.
 
 ---
 
-## Troubleshooting
+## 3. Running on Any Other Desktop
 
-| Symptom | Cause | Fix |
-|---|---|---|
-| `nuro: command not found` | PATH not updated | Open a **new** terminal, or run `.\install.ps1 -Apply` again; or call `.venv\Scripts\nuro.exe` directly. |
-| `No serial ports found` on Windows | CH343 driver missing, or charge-only cable | Install the WCH driver, replug, check Device Manager → Ports. |
-| Port appears then disappears | Another program owns it (Arduino IDE, PuTTY, `nuro term`) | Close the other program. Windows serial ports are exclusive. |
-| `nuro tui` shows "IN-SILICO" | Board busy/unplugged, or you are inside `nuro demo` (the cockpit owns the port) | Expected in `demo`; otherwise run `nuro doctor`. |
-| Wrong port chosen (several boards) | Ranking picked the first CH343 | `--port COM7` or `set NURO_PORT=COM7`. |
-| `Permission denied` on Linux | User not in `dialout` | `sudo usermod -aG dialout $USER`, then re-login. |
-| `esptool is not installed` | venv missing the dependency | `nuro setup` (or `pip install -e .`). |
-| `nuro info` says "NOT RESPONDING" | Board in a sketch that blocks the ROM loader, or held in reset | Hold **BOOT**, tap **RESET**, release **BOOT**, retry. |
-| `nuro bench` reports `stim_pulses_fired: 0` | The board boots **disarmed** | Expected. Add `--arm` (`nuro bench --arm` / `nuro demo --arm`) to enable GPIO4 for that run; it is disarmed again at the end. |
-| Board reboots whenever a command starts | Opening the serial port resets the ESP32-S3 (DTR/RTS) | Expected. It is also why the stimulation gate always comes back disarmed after a reconnect. |
+To run Neural Loop on any fresh desktop or laptop:
 
----
-
-## Uninstall
-
-```powershell
-# Windows
-.\install.ps1   # shows the PATH entry; remove it in Settings → Environment Variables
-Remove-Item -Recurse -Force .venv
-```
-
-Nothing outside the repository and the user PATH entry is modified.
+1. **Copy or Clone the Repository:**
+   ```powershell
+   git clone <repo_url> "C:\neural-loop"
+   cd "C:\neural-loop"
+   ```
+2. **Run One-Click Setup:**
+   ```cmd
+   setup.cmd
+   ```
+   *(Creates Python virtual environment, installs dependencies, and runs `nuro doctor`).*
+3. **Enable Plug & Play Auto-Launch:**
+   ```cmd
+   nuro watch --install
+   ```
+4. **Plug in your ESP32-S3:**
+   The TUI automatically detects the board and opens the live workstation!

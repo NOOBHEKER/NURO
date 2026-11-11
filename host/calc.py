@@ -437,6 +437,22 @@ def calculate_and_graph(
         except Exception as e:
             return f"{C_AMBER}[GUI ERROR]: {e}{C_RESET}"
 
+    if q_cmd in ("watch", "pnp", "plug", "plug and play", "plug-and-play"):
+        from host.board import detect_board_port
+        from host.watch import is_startup_installed
+
+        p_cur = detect_board_port()
+        is_inst = is_startup_installed()
+        return (
+            f"\n{C_BOLD}{C_CYAN}╔═══════════════════════════════════════════════════════════════╗{C_RESET}\n"
+            f"{C_BOLD}{C_CYAN}║     ⚡ nuro Plug & Play Status                                ║{C_RESET}\n"
+            f"{C_BOLD}{C_CYAN}╚═══════════════════════════════════════════════════════════════╝{C_RESET}\n"
+            f"  {C_GRAY}ESP32-S3 Board Status  :{C_RESET} {f'{C_GREEN}CONNECTED on {p_cur}' if p_cur else f'{C_AMBER}UNPLUGGED (Insert anytime)'}{C_RESET}\n"
+            f"  {C_GRAY}Windows Auto-Launch    :{C_RESET} {f'{C_GREEN}ACTIVE (Startup Installed)' if is_inst else f'{C_GRAY}DISABLED (run: nuro watch --install)'}{C_RESET}\n"
+            f"  {C_GRAY}Dynamic Hotplug in TUI :{C_RESET} {C_GREEN}ENABLED (auto-detects insertion live in TUI){C_RESET}\n"
+            f"  {C_GRAY}Launch Live TUI Now    :{C_RESET} type {C_GREEN}neural{C_RESET} or {C_GREEN}tui{C_RESET}\n"
+        )
+
     # 0. Direct AI / LLM Query trigger: e.g. "ai explain quadratic formula" or "ask ..."
     if q_clean_low.startswith(("ai ", "ask ", "llm ", "explain ")):
         prompt_text = re.sub(

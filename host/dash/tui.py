@@ -305,9 +305,39 @@ def run_tui(
     bot_border = f"╰─{'─' * w_l}─┴─{'─' * w_r}─╯"
 
     frame_count = 0
+    last_hotplug_probe = time.time()
     try:
         while True:
             frame_count += 1
+
+            # Dynamic Plug & Play: auto-detect and connect whenever ESP32-S3 is plugged in
+            if not hw_live and not mirror:
+                now_s = time.time()
+                if now_s - last_hotplug_probe >= 1.0:
+                    last_hotplug_probe = now_s
+                    from host.board import detect_board_port
+
+                    found_port = detect_board_port()
+                    if found_port:
+                        try:
+                            ser = serial.Serial(
+                                port=found_port,
+                                baudrate=baudrate,
+                                timeout=0.20,
+                                write_timeout=0.20,
+                            )
+                            ser.dtr = False
+                            ser.rts = False
+                            time.sleep(0.20)
+                            ser.reset_input_buffer()
+                            ser.reset_output_buffer()
+                            hw_live = True
+                            port = found_port
+                            event_log.append(
+                                f"[HOTPLUG] Board detected on {found_port} -> LIVE HIL connected!"
+                            )
+                        except Exception:
+                            hw_live = False
             if has_msvcrt:
                 import msvcrt
 
@@ -410,6 +440,15 @@ def run_tui(
                                     fired = True
                         else:
                             crc_err += 1
+                    except (serial.SerialException, OSError):
+                        hw_live = False
+                        try:
+                            if ser is not None and ser.is_open:
+                                ser.close()
+                        except Exception:
+                            pass
+                        ser = None
+                        event_log.append("[HOTPLUG] Board disconnected -> In-silico fallback")
                     except Exception:
                         crc_err += 1
                 else:
@@ -447,7 +486,7 @@ def run_tui(
             hw_str = (
                 f"{C_GREEN}● LIVE ESP32-S3 ({port} @ 2M){C_RESET}"
                 if hw_live
-                else f"{C_AMBER}● IN-SILICO SIMULATOR{C_RESET}"
+                else f"{C_AMBER}● IN-SILICO (PnP Auto-Detect){C_RESET}"
             )
             loop_str = (
                 f"{C_GREEN}[LOOP: ON  (SUPPRESSING)]{C_RESET}"
