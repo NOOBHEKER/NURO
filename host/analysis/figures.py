@@ -417,7 +417,9 @@ def generate_fig4_latency(hil_metrics: Dict[str, Any], out_dir: Path) -> List[Pa
     ax1.set_xticklabels(labels, fontsize=8.8)
     ax1.set_ylabel("Measured Latency (µs)", fontsize=9.5)
     ax1.set_title(
-        "(a) ESP32-S3 Hardware Latency (COM6)", fontsize=9.5, fontweight="bold"
+        f"(a) ESP32-S3 Hardware Latency ({hil_metrics.get('port') or 'auto-detected UART'})",
+        fontsize=9.5,
+        fontweight="bold",
     )
     ax1.legend(frameon=False, fontsize=8.2)
 
@@ -453,8 +455,10 @@ def generate_fig4_latency(hil_metrics: Dict[str, Any], out_dir: Path) -> List[Pa
         )
     ax2.set_ylim(0, max(vals) * 1.24)
     ax2.set_ylabel("Stage Time at p50 (µs)", fontsize=9.5)
+    n_frames = hil_metrics.get("n_frames_sent") or hil_metrics.get("n_frames_valid")
+    frame_note = f" ({n_frames} Frames)" if n_frames else ""
     ax2.set_title(
-        "(b) Decomposed Stage Split (1000 Frames)", fontsize=9.5, fontweight="bold"
+        f"(b) Decomposed Stage Split{frame_note}", fontsize=9.5, fontweight="bold"
     )
 
     fig.suptitle(
