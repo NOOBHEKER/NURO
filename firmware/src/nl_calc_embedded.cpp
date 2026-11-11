@@ -385,14 +385,12 @@ void nl_calc_exec_command(const char *cmd_line) {
         Serial.println("  CHEMISTRY:");
         Serial.println("    mass <formula>           : Flash periodic table molar mass (e.g. C6H12O6)");
         Serial.println("    ph <conc> [base]         : Solution pH/pOH calculation");
-        Serial.println("  NEURAL TESTS:");
+        Serial.println("  SYSTEM & NEUROMODULATION:");
+        Serial.println("    status                   : Chip CPU frequency, free heap, PSRAM & link state");
         Serial.println("    neuro                    : Live on-chip DSP envelope, phase & pulse stats");
-        Serial.println("    sim burst                : Self-test 20Hz burst alert (requires 'arm')");
-        Serial.println("    sim rest                 : Restore normal baseline noise");
-        Serial.println("    status                   : Chip CPU frequency, free heap & PSRAM");
-        Serial.println("  SAFETY:");
-        Serial.println("    arm                      : Enable GPIO4 stimulation marker (boot = disarmed)");
-        Serial.println("    disarm                   : Disable GPIO4 immediately and go safe");
+        Serial.println("    burst                    : Trigger single 20Hz burst test cycle");
+        Serial.println("    rest                     : Restore calm resting baseline");
+        Serial.println("    arm / disarm             : Toggle GPIO4 stimulation marker (boot = disarmed)");
     } else if (strcmp(cmd, "arm") == 0) {
         nl_set_armed(true);
     } else if (strcmp(cmd, "disarm") == 0) {
@@ -478,7 +476,7 @@ void nl_calc_exec_command(const char *cmd_line) {
     } else if (strcmp(cmd, "rest") == 0) {
         nl_run_sim_rest();
     } else if (strcmp(cmd, "status") == 0 || strcmp(cmd, "static") == 0) {
-        nl_set_status_led(0, nl_is_armed() ? 15 : 0, nl_is_armed() ? 0 : 15);
+        nl_set_status_led(0, 15, 0);
         Serial.println("\r\n=======================================================");
         Serial.println("⚡ ESP32-S3 SYSTEM HARDWARE STATUS");
         Serial.println("=======================================================");

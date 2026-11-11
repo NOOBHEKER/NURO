@@ -72,12 +72,10 @@ void nl_set_armed(bool armed) {
     g_armed = armed;
     g_state = armed ? NL_STATE_ARMED : NL_STATE_IDLE;
     if (armed) {
-        nl_set_status_led(0, 15, 0);
-        Serial.println("  [ARM] GPIO4 stimulation marker ENABLED (green LED).");
+        Serial.println("  [ARM] GPIO4 stimulation marker ENABLED.");
     } else {
         digitalWrite(PIN_STIM_OUT, LOW);
-        nl_set_status_led(0, 0, 15);
-        Serial.println("  [DISARM] GPIO4 stimulation marker DISABLED (blue LED). Board is safe.");
+        Serial.println("  [DISARM] GPIO4 stimulation marker DISABLED. Board is safe.");
     }
 }
 
@@ -92,10 +90,7 @@ static void update_live_status_led(bool is_burst, bool triggered, uint16_t env, 
     uint32_t now = millis();
     uint8_t target_r = 0, target_g = 15, target_b = 0; // Default: calm resting Green
 
-    if (!g_armed) {
-        // Safe state: dim blue, never show a burst colour while disarmed.
-        target_r = 0; target_g = 0; target_b = 15;
-    } else if (triggered) {
+    if (triggered) {
         // Red latch on burst trigger: hold for 250 ms so each pulse is a clean, solid indicator
         g_red_led_until_ms = now + 250;
         target_r = 30; target_g = 0; target_b = 0;
@@ -209,7 +204,7 @@ void nl_run_sim_burst(void) {
 
     // Restore resting
     g_state = g_armed ? NL_STATE_ARMED : NL_STATE_IDLE;
-    nl_set_status_led(0, g_armed ? 15 : 0, g_armed ? 0 : 15); // Green if armed, blue if safe
+    nl_set_status_led(0, 15, 0); // Always restore resting baseline Green
     nl_lcd_show_neuro(g_armed ? "RESTING" : "DISARMED", 50, 0);
     Serial.println("  [RESET] Closed-loop restored to resting baseline -> LED 🟢 GREEN\r\n");
 }
@@ -219,13 +214,9 @@ void nl_run_sim_rest(void) {
     nl_snn_reset(&g_snn);
     nl_dsp_init(&g_dsp);
     g_state = g_armed ? NL_STATE_ARMED : NL_STATE_IDLE;
-    nl_set_status_led(0, g_armed ? 15 : 0, g_armed ? 0 : 15);
+    nl_set_status_led(0, 15, 0); // Always restore resting baseline Green
     nl_lcd_show_neuro(g_armed ? "RESTING" : "DISARMED", 35, 0);
-    if (g_armed) {
-        Serial.println("  [RESET] Baseline restored. Neural loop ARMED in resting state (LED 🟢 GREEN).");
-    } else {
-        Serial.println("  [RESET] Baseline restored. Board is DISARMED (LED 🔵 BLUE); type 'arm' to enable GPIO4.");
-    }
+    Serial.println("  [RESET] Baseline restored to resting state -> LED 🟢 GREEN.");
 }
 
 /* One-shot boot report: prove which silicon and which memory map is live. */
@@ -296,8 +287,8 @@ static void init_watchdog(void) {
 }
 
 void setup() {
-    /* 1. Initialize status LED to safe disarmed blue (low-glare) */
-    nl_set_status_led(0, 0, 15);
+    /* 1. Initialize status LED to calm resting baseline Green */
+    nl_set_status_led(0, 15, 0);
 
     /* 2. Configure safe stimulation marker pin, driven low before anything else */
     pinMode(PIN_STIM_OUT, OUTPUT);
@@ -325,15 +316,15 @@ void setup() {
     /* 8. Print the verified silicon report, then the welcome banner */
     nl_run_boot_selftest();
     Serial.println("\r\n=======================================================");
-    Serial.println("⚡ NEURAL LOOP & SCIENTIFIC POCKET LAB (ESP32-S3)");
+    Serial.println("⚡ NURO CLOSED-LOOP EDGE ACCELERATOR (ESP32-S3)");
     Serial.println("=======================================================");
     Serial.println("  Core: Xtensa Dual-Core LX7 @ 240 MHz | Hardware FPU");
     Serial.println("  DSP: 61-tap Q15 Quadrature FIR | 64-neuron Int8 LIF SNN");
-    Serial.println("  Stimulus Pin: GPIO 4 | RGB LED: GPIO 48/38");
-    Serial.println("  Status: 🔵 DISARMED (safe) — type 'arm' to enable GPIO4");
+    Serial.println("  Stimulus Pin: GPIO 4 | RGB Status LED: GPIO 48/38");
+    Serial.println("  Status: 🟢 RESTING BASELINE ACTIVE");
+    Serial.println("  Gate: DISARMED (type 'arm' to enable GPIO4 pulses)");
     Serial.println("-------------------------------------------------------");
-    Serial.println("  Type 'help' for Scientific Lab (Math/Physics/Chem)");
-    Serial.println("  Type 'arm' then 'sim burst' for the phase-locked self-test");
+    Serial.println("  Type 'help' for command list");
     Serial.println("=======================================================");
     Serial.print("esp32-s3> ");
 }
