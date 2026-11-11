@@ -138,6 +138,17 @@ def main() -> None:
     )
     p_tui.add_argument("--frames", type=int, default=None, help="Batch frame limit")
 
+    # nuro treat
+    p_treat = sub.add_parser(
+        "treat",
+        aliases=["patient", "clinic"],
+        help="Active clinical closed-loop epilepsy treatment on PhysioNet CHB-MIT patient EEG",
+    )
+    p_treat.add_argument(
+        "--port", default=None, help="Serial port (default: auto-detect)"
+    )
+    p_treat.add_argument("--frames", type=int, default=None, help="Batch frame limit")
+
     # nuro demo
     p_demo = sub.add_parser(
         "demo",
@@ -390,7 +401,7 @@ def main() -> None:
             )
         )
 
-    if cmd in ("tui", "neural", "mneuro", "live"):
+    if cmd in ("tui", "neural", "mneuro", "live", "treat", "patient", "clinic"):
         from host.board import resolve_port
         from host.dash.tui import run_tui
 

@@ -262,15 +262,17 @@ def run_tui(
     loop_on = True
     arm_idx = 0
     model_idx = 0
+    patient_ids = ["chb01", "chb02", "chb03"]
+    pat_idx = 0
     arm_names = [
         "D: PHASE-LOCKED (φ*=-π)",
         "C: RANDOM-PHASE SHAM",
         "B: OPEN-LOOP 20 Hz",
     ]
     model_names = [
-        "STAGE 1: KURAMOTO (N=64)",
-        "STAGE 2: JANSEN-RIT NMM",
-        "STAGE 3: CHB-MIT PATIENT (PhysioNet)",
+        "STAGE 1: CHB-MIT CLINICAL PATIENT (PhysioNet)",
+        "STAGE 2: KURAMOTO (N=64) IN-SILICO",
+        "STAGE 3: JANSEN-RIT NMM IN-SILICO",
     ]
 
     seq = 0
@@ -354,9 +356,12 @@ def run_tui(
                     ch = msvcrt.getch()
                     if ch == b" ":
                         loop_on = not loop_on
-                        event_log.append(
-                            f"[KEY] Closed-Loop -> {'ON (SUPPRESSING)' if loop_on else 'OFF (ICTAL SURGE)'}"
+                        status_str = (
+                            ("ON (TREATING)" if model_idx == 0 else "ON (SUPPRESSING)")
+                            if loop_on
+                            else ("OFF (UNTREATED)" if model_idx == 0 else "OFF (ICTAL SURGE)")
                         )
+                        event_log.append(f"[KEY] Closed-Loop -> {status_str}")
                     elif ch in (b"m", b"M"):
                         arm_idx = (arm_idx + 1) % 3
                         event_log.append(
@@ -367,29 +372,45 @@ def run_tui(
                         event_log.append(
                             f"[KEY] Brain Model -> {model_names[model_idx]}"
                         )
-                    elif ch in (b"r", b"R"):
-                        k_brain.theta = np.mod(
-                            k_brain.rng.normal(0.0, 0.35, size=k_brain.cfg.n_osc),
-                            2.0 * np.pi,
-                        )
+                    elif ch in (b"p", b"P"):
+                        pat_idx = (pat_idx + 1) % len(patient_ids)
+                        patient_brain.set_patient(patient_ids[pat_idx])
+                        model_idx = 0
                         event_log.append(
-                            "[KEY] Injected synchronous seizure burst (R -> 0.90)"
+                            f"[KEY] Patient -> {patient_ids[pat_idx].upper()} (CHB-MIT Scalp EEG)"
                         )
+                    elif ch in (b"r", b"R"):
+                        if model_idx == 0:
+                            patient_brain.reset_to_onset()
+                            event_log.append(
+                                f"[KEY] Rewound Patient {patient_ids[pat_idx].upper()} to seizure onset (-5s)"
+                            )
+                        else:
+                            k_brain.theta = np.mod(
+                                k_brain.rng.normal(0.0, 0.35, size=k_brain.cfg.n_osc),
+                                2.0 * np.pi,
+                            )
+                            event_log.append(
+                                "[KEY] Injected synchronous seizure burst (R -> 0.90)"
+                            )
                     elif ch in (b"q", b"Q", b"\x1b"):
                         return
 
             fired_this_batch = False
             for _ in range(20):
-                s0, _, _ = k_brain.step(stim_amp=pending_stim)
-                s1, r_val, psi_val = k_brain.step(stim_amp=0.0)
-                if model_idx == 1:
-                    j0, _ = jr_brain.step(u_stim=pending_stim * 0.2)
-                    j1, _ = jr_brain.step(u_stim=0.0)
-                    s0, s1 = j0, j1
-                elif model_idx == 2:
-                    p0, _, _ = patient_brain.step(stim_amp=pending_stim)
+                if model_idx == 0:
+                    p0, _, _ = patient_brain.step(stim_amp=pending_stim if loop_on else 0.0)
                     p1, r_val, psi_val = patient_brain.step(stim_amp=0.0)
                     s0, s1 = p0, p1
+                elif model_idx == 1:
+                    s0, _, _ = k_brain.step(stim_amp=pending_stim if loop_on else 0.0)
+                    s1, r_val, psi_val = k_brain.step(stim_amp=0.0)
+                elif model_idx == 2:
+                    s0, _, _ = k_brain.step(stim_amp=0.0)
+                    s1, r_val, psi_val = k_brain.step(stim_amp=0.0)
+                    j0, _ = jr_brain.step(u_stim=(pending_stim * 0.2) if loop_on else 0.0)
+                    j1, _ = jr_brain.step(u_stim=0.0)
+                    s0, s1 = j0, j1
                 pending_stim = 0.0
 
                 dsp.step(s0)
@@ -480,17 +501,25 @@ def run_tui(
                     refrac = 20
                     fired_this_batch = True
                     if model_idx == 0:
+                        event_log.append(
+                            f"[TREAT #{pulses:03d}] seq={seq:<4d} ψ={psi_val:+.2f}rad R={r_val:.3f} Pat={patient_brain.patient_id.upper()} [SUPPRESSED]"
+                        )
+                    elif model_idx == 1:
                         k_brain.theta = np.mod(
                             k_brain.theta + k_brain.rng.normal(0.0, 2.2, size=k_brain.cfg.n_osc),
                             2.0 * np.pi,
                         )
-                    event_log.append(
-                        f"[STIM #{pulses:03d}] seq={seq:<4d} ψ={psi_val:+.2f}rad R={r_val:.3f} T_BLANK=20ms"
-                    )
+                        event_log.append(
+                            f"[STIM #{pulses:03d}] seq={seq:<4d} ψ={psi_val:+.2f}rad R={r_val:.3f} T_BLANK=20ms"
+                        )
+                    else:
+                        event_log.append(
+                            f"[STIM #{pulses:03d}] seq={seq:<4d} ψ={psi_val:+.2f}rad R={r_val:.3f} T_BLANK=20ms"
+                        )
                 elif refrac > 0:
                     refrac -= 1
 
-                if not loop_on and r_val < 0.88 and model_idx == 0:
+                if not loop_on and r_val < 0.88 and model_idx == 1:
                     k_brain.theta = np.mod(
                         k_brain.theta - 0.016 * np.sin(k_brain.theta - psi_val),
                         2.0 * np.pi,
@@ -506,11 +535,18 @@ def run_tui(
                 if hw_live
                 else f"{C_AMBER}● IN-SILICO (PnP Auto-Detect){C_RESET}"
             )
-            loop_str = (
-                f"{C_GREEN}[LOOP: ON  (SUPPRESSING)]{C_RESET}"
-                if loop_on
-                else f"{C_RED}[LOOP: OFF (ICTAL SURGE)]{C_RESET}"
-            )
+            if loop_on:
+                loop_str = (
+                    f"{C_GREEN}[LOOP: ON  (TREATING PATIENT)]{C_RESET}"
+                    if model_idx == 0
+                    else f"{C_GREEN}[LOOP: ON  (SUPPRESSING)]{C_RESET}"
+                )
+            else:
+                loop_str = (
+                    f"{C_RED}[LOOP: OFF (UNTREATED ICTAL)]{C_RESET}"
+                    if model_idx == 0
+                    else f"{C_RED}[LOOP: OFF (ICTAL SURGE)]{C_RESET}"
+                )
             cur_r = r_val
             r_col = C_GREEN if cur_r < 0.35 else (C_AMBER if cur_r < 0.65 else C_RED)
             r_bar_len = int(np.clip(round(cur_r * 38), 0, 38))
@@ -533,6 +569,12 @@ def run_tui(
             header_title = pad_ansi(
                 f" ⚡ {C_BOLD}NEURAL LOOP TUI v2.0{C_RESET} │ $0 ESP32-S3 HIL Closed-Loop Edge Neuromodulation Workstation │ 2000 Hz Lockstep",
                 total_w,
+            )
+
+            hero_title = (
+                f"{C_BOLD}[3] HERO — Real-Time Patient Seizure Synchrony Collapse R(t){C_RESET}"
+                if model_idx == 0
+                else f"{C_BOLD}[3] HERO — Real-Time Kuramoto Synchrony Collapse R(t){C_RESET}"
             )
 
             rows = [
@@ -583,7 +625,7 @@ def run_tui(
                 ),
                 f"├─{'─' * w_l}─┤ {pad_ansi(compass[4], w_r)} │",
                 make_row(
-                    f"{C_BOLD}[3] HERO — Real-Time Kuramoto Synchrony Collapse R(t){C_RESET}",
+                    hero_title,
                     compass[5],
                     w_l,
                     w_r,
@@ -655,14 +697,14 @@ def run_tui(
             ]
             for i in range(4):
                 ev = event_log[i] if i < len(event_log) else ""
-                ev_col = C_GREEN if "STIM" in ev else C_CYAN
+                ev_col = C_GREEN if ("STIM" in ev or "TREAT" in ev) else C_CYAN
                 rows.append(
                     make_row(f"{ev_col}{ev}{C_RESET}", safety_lines[i], w_l, w_r)
                 )
 
             rows.append(bot_border)
             rows.append(
-                f" {C_BOLD}HOTKEYS:{C_RESET} {C_CYAN}[SPACE]{C_RESET} Loop ON/OFF │ {C_CYAN}[M]{C_RESET} Cycle Arm (D/C/B) │ {C_CYAN}[1/2/3]{C_RESET} Kuramoto/JR/CHB-MIT │ {C_CYAN}[R]{C_RESET} Seizure Burst │ {C_CYAN}[Q]{C_RESET} Quit"
+                f" {C_BOLD}HOTKEYS:{C_RESET} {C_CYAN}[SPACE]{C_RESET} Loop ON/OFF │ {C_CYAN}[M]{C_RESET} Arm (D/C/B) │ {C_CYAN}[1/2/3]{C_RESET} Patient/Kuramoto/JR │ {C_CYAN}[P]{C_RESET} Switch Patient │ {C_CYAN}[R]{C_RESET} Seizure Onset │ {C_CYAN}[Q]{C_RESET} Quit"
             )
 
             if max_frames is None:

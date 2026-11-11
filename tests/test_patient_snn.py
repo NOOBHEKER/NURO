@@ -32,7 +32,7 @@ def test_clinical_patient_dataset_structure() -> None:
 
 def test_patient_brain_closed_loop_suppression() -> None:
     """Verify that PatientBrain steps properly and suppresses seizure amplitude upon stimulation."""
-    brain = PatientBrain("chb01")
+    brain = PatientBrain("chb01", start_at_onset=False)
     # Advance to seizure window
     for _ in range(brain.sz_start_idx + 100):
         brain.step(stim_amp=0.0)

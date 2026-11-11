@@ -175,19 +175,41 @@ class PatientBrain:
     neurostimulation (RNS / DBS).
     """
 
-    def __init__(self, patient_id: str = "chb01", scale_int16: float = 2.5):
+    def __init__(
+        self,
+        patient_id: str = "chb01",
+        scale_int16: float = 2.5,
+        start_at_onset: bool = True,
+    ):
         self.patient_id = patient_id
         self.scale = scale_int16
-        data = ensure_patient_dataset()
+        self.start_at_onset = start_at_onset
+        self.data = ensure_patient_dataset()
+        self._load_patient(patient_id, start_at_onset)
 
-        # Load seizure sequence
-        self.sig = data[f"{patient_id}_sz_sig"]
-        self.labels = data[f"{patient_id}_sz_labels"]
-        self.sz_start_idx = int(data[f"{patient_id}_sz_start_s"] * 2000)
-        self.sz_end_idx = int(data[f"{patient_id}_sz_end_s"] * 2000)
-
-        self.idx = 0
+    def _load_patient(self, patient_id: str, start_at_onset: bool = True) -> None:
+        self.patient_id = patient_id
+        self.sig = self.data[f"{patient_id}_sz_sig"]
+        self.labels = self.data[f"{patient_id}_sz_labels"]
+        self.sz_start_idx = int(self.data[f"{patient_id}_sz_start_s"] * 2000)
+        self.sz_end_idx = int(self.data[f"{patient_id}_sz_end_s"] * 2000)
         self.n_samples = len(self.sig)
+
+        # Start 5s before onset so user sees calm -> ramp -> seizure -> active treatment
+        if start_at_onset:
+            self.idx = max(0, self.sz_start_idx - 10000)
+        else:
+            self.idx = 0
+        self.suppression_factor = 1.0
+        self.last_stim_idx = -999999
+
+    def set_patient(self, patient_id: str, start_at_onset: bool = True) -> None:
+        """Switch active clinical patient trace."""
+        self._load_patient(patient_id, start_at_onset)
+
+    def reset_to_onset(self) -> None:
+        """Rewind to 5s before clinical seizure onset."""
+        self.idx = max(0, self.sz_start_idx - 10000)
         self.suppression_factor = 1.0
         self.last_stim_idx = -999999
 
@@ -200,11 +222,11 @@ class PatientBrain:
         if stim_amp > 0.0:
             self.last_stim_idx = self.idx
             # Closed-loop stimulus dampens seizure discharge amplitude (therapeutic suppression)
-            self.suppression_factor = max(0.20, self.suppression_factor * 0.70)
+            self.suppression_factor = max(0.18, self.suppression_factor * 0.60)
 
-        # Natural slow recovery of suppression factor back to 1.0
-        if self.idx - self.last_stim_idx > 1000:
-            self.suppression_factor = min(1.0, self.suppression_factor + 0.0003)
+        # Slow recovery of suppression factor back to unsuppressed baseline after 2.5s without stim
+        if self.idx - self.last_stim_idx > 5000:
+            self.suppression_factor = min(1.0, self.suppression_factor + 0.0004)
 
         raw_val = self.sig[self.idx % self.n_samples] * self.suppression_factor
         is_seizure = self.labels[self.idx % self.n_samples]
@@ -222,12 +244,13 @@ class PatientBrain:
             r_val = float(np.clip(0.78 * self.suppression_factor + 0.12 * np.sin(self.idx * 0.01), 0.15, 0.98))
         else:
             # Baseline / pre-ictal ramp
-            progress = (self.idx % self.n_samples) / max(1, self.sz_start_idx)
+            progress = min(1.0, (self.idx % self.n_samples) / max(1, self.sz_start_idx))
             if progress < 0.60:
                 r_val = float(0.18 + 0.08 * np.sin(self.idx * 0.005))
             else:
                 ramp = (progress - 0.60) / 0.40
                 r_val = float(0.18 + ramp * 0.45 + 0.05 * np.sin(self.idx * 0.01))
+            r_val = float(np.clip(r_val, 0.10, 0.65))
 
         psi_val = float(np.angle(np.exp(1j * (self.idx * 2.0 * np.pi * 20.0 / 2000.0))))
 

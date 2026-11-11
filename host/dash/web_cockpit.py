@@ -32,6 +32,7 @@ from host.hil.protocol import (
 )
 from host.virtualbrain.kuramoto import KuramotoBrain, KuramotoConfig
 from host.virtualbrain.jansen_rit import JansenRitBrain, JansenRitConfig
+from host.replay.patient_data import PatientBrain
 from host.hil.dsp_ref import DspChainRef
 
 
@@ -770,6 +771,9 @@ class TuiCockpitEngine:
         self.hw_live = False
         self._connect_serial()
 
+        self.patient_ids = ["chb01", "chb02", "chb03"]
+        self.pat_idx = 0
+        self.patient_brain = PatientBrain("chb01", start_at_onset=True)
         self.k_brain = KuramotoBrain(KuramotoConfig(seed=2026))
         self.k_brain.theta = np.mod(
             self.k_brain.rng.normal(0.0, 0.55, size=self.k_brain.cfg.n_osc), 2.0 * np.pi
@@ -801,7 +805,11 @@ class TuiCockpitEngine:
             "C: RANDOM-PHASE SHAM",
             "B: OPEN-LOOP 20 Hz",
         ]
-        self.model_names = ["STAGE 1: KURAMOTO (N=64)", "STAGE 2: JANSEN-RIT NMM"]
+        self.model_names = [
+            "STAGE 1: CHB-MIT CLINICAL PATIENT (PhysioNet)",
+            "STAGE 2: KURAMOTO (N=64)",
+            "STAGE 3: JANSEN-RIT NMM",
+        ]
         self.seq = 0
         self.pulses = 0
         self.valid_frames = 0
@@ -901,30 +909,61 @@ class TuiCockpitEngine:
                 self.arm_idx = 2
                 self.events.append(f"[CLI] Arm -> {self.arm_names[2]}")
             elif cmd in ("toggle_model", "model"):
-                self.model_idx = (self.model_idx + 1) % 2
+                self.model_idx = (self.model_idx + 1) % len(self.model_names)
                 self.events.append(f"[CLI] Model -> {self.model_names[self.model_idx]}")
-            elif "jansen" in cmd or cmd == "2":
-                self.model_idx = 1
-                self.events.append(f"[CLI] Model -> {self.model_names[1]}")
-            elif "kuramoto" in cmd or cmd == "1":
+            elif "patient" in cmd or cmd == "1":
                 self.model_idx = 0
                 self.events.append(f"[CLI] Model -> {self.model_names[0]}")
-            elif cmd in ("inject_burst", "burst", "reset"):
-                self.k_brain.theta = np.mod(
-                    self.k_brain.rng.normal(0.0, 0.35, size=self.k_brain.cfg.n_osc),
-                    2.0 * np.pi,
-                )
-                self.stim_phases.clear()
+            elif "kuramoto" in cmd or cmd == "2":
+                self.model_idx = 1
+                self.events.append(f"[CLI] Model -> {self.model_names[1]}")
+            elif "jansen" in cmd or cmd == "3":
+                self.model_idx = 2
+                self.events.append(f"[CLI] Model -> {self.model_names[2]}")
+            elif cmd in ("patient_next", "pat", "p"):
+                self.pat_idx = (self.pat_idx + 1) % len(self.patient_ids)
+                self.patient_brain.set_patient(self.patient_ids[self.pat_idx])
+                self.model_idx = 0
                 self.events.append(
-                    "[CLI] Injected synchronous seizure burst (R -> 0.90)"
+                    f"[CLI] Patient -> {self.patient_ids[self.pat_idx].upper()} (CHB-MIT Scalp EEG)"
                 )
+            elif cmd in ("rewind", "onset", "r"):
+                if self.model_idx == 0:
+                    self.patient_brain.reset_to_onset()
+                    self.events.append(
+                        f"[CLI] Rewound Patient {self.patient_ids[self.pat_idx].upper()} to seizure onset (-5s)"
+                    )
+                else:
+                    self.k_brain.theta = np.mod(
+                        self.k_brain.rng.normal(0.0, 0.35, size=self.k_brain.cfg.n_osc),
+                        2.0 * np.pi,
+                    )
+                    self.stim_phases.clear()
+                    self.events.append(
+                        "[CLI] Injected synchronous seizure burst (R -> 0.90)"
+                    )
+            elif cmd in ("inject_burst", "burst", "reset"):
+                if self.model_idx == 0:
+                    self.patient_brain.reset_to_onset()
+                    self.events.append(
+                        f"[CLI] Rewound Patient {self.patient_ids[self.pat_idx].upper()} to seizure onset (-5s)"
+                    )
+                else:
+                    self.k_brain.theta = np.mod(
+                        self.k_brain.rng.normal(0.0, 0.35, size=self.k_brain.cfg.n_osc),
+                        2.0 * np.pi,
+                    )
+                    self.stim_phases.clear()
+                    self.events.append(
+                        "[CLI] Injected synchronous seizure burst (R -> 0.90)"
+                    )
             elif cmd == "help":
                 self.events.append(
-                    "[HELP] Commands: loop on/off | arm d/c/b | model 1/2 | burst"
+                    "[HELP] Commands: loop on/off | arm d/c/b | model 1/2/3 | pat | onset | burst"
                 )
             else:
                 self.events.append(
-                    f"[CLI] Unknown '{cmd}' — try: loop on/off, arm d/c/b, burst"
+                    f"[CLI] Unknown '{cmd}' — try: loop on/off, arm d/c/b, pat, onset, burst"
                 )
 
     def step_batch(self, n_frames: int = 16) -> None:
@@ -934,12 +973,24 @@ class TuiCockpitEngine:
                 if not self.hw_live and (self.seq % 200 == 0):
                     self._connect_serial()
 
-                s0, _, _ = self.k_brain.step(stim_amp=self.pending_stim)
-                s1, r_val, psi_val = self.k_brain.step(stim_amp=0.0)
-                if self.model_idx == 1:
-                    j0, _ = self.jr_brain.step(u_stim=self.pending_stim * 0.2)
+                if self.model_idx == 0:
+                    p0, _, _ = self.patient_brain.step(
+                        stim_amp=self.pending_stim if self.loop_on else 0.0
+                    )
+                    p1, r_val, psi_val = self.patient_brain.step(stim_amp=0.0)
+                    s0, s1 = p0, p1
+                elif self.model_idx == 1:
+                    s0, _, _ = self.k_brain.step(
+                        stim_amp=self.pending_stim if self.loop_on else 0.0
+                    )
+                    s1, r_val, psi_val = self.k_brain.step(stim_amp=0.0)
+                else:
+                    j0, _ = self.jr_brain.step(
+                        u_stim=self.pending_stim * 0.2 if self.loop_on else 0.0
+                    )
                     j1, _ = self.jr_brain.step(u_stim=0.0)
                     s0, s1 = j0, j1
+                    r_val, psi_val = 0.45, 0.0
                 self.pending_stim = 0.0
 
                 for i in range(len(self.stim_indices)):
@@ -1036,13 +1087,24 @@ class TuiCockpitEngine:
                     self.stim_fired_batch = True
                     self.stim_indices.append(self.win_len - 1)
                     self.stim_phases.append(psi_val)
-                    self.events.append(
-                        f"[STIM #{self.pulses:03d}] seq={self.seq:<5d} ψ={psi_val:+.2f}rad R={r_val:.3f} T_BLANK=20ms"
-                    )
+                    if self.model_idx == 0:
+                        self.events.append(
+                            f"[TREAT #{self.pulses:03d}] seq={self.seq:<5d} ψ={psi_val:+.2f}rad R={r_val:.3f} Pat={self.patient_brain.patient_id.upper()} [SUPPRESSED]"
+                        )
+                    else:
+                        if self.model_idx == 1:
+                            self.k_brain.theta = np.mod(
+                                self.k_brain.theta
+                                + self.k_brain.rng.normal(0.0, 2.2, size=self.k_brain.cfg.n_osc),
+                                2.0 * np.pi,
+                            )
+                        self.events.append(
+                            f"[STIM #{self.pulses:03d}] seq={self.seq:<5d} ψ={psi_val:+.2f}rad R={r_val:.3f} T_BLANK=20ms"
+                        )
                 elif self.refrac > 0:
                     self.refrac -= 1
 
-                if not self.loop_on and r_val < 0.88:
+                if not self.loop_on and r_val < 0.88 and self.model_idx == 1:
                     self.k_brain.theta = np.mod(
                         self.k_brain.theta
                         - 0.016 * np.sin(self.k_brain.theta - psi_val),

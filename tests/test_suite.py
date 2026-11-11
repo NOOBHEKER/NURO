@@ -352,7 +352,7 @@ def test_tui_and_web_cockpit_engines() -> None:
     eng.execute_command("cli:arm sham")
     assert eng.arm_idx == 1
     eng.execute_command("cli:model jansen")
-    assert eng.model_idx == 1
+    assert eng.model_idx == 2
     eng.execute_command("cli:burst")
     snap = eng.snapshot()
     assert "hex_inspector" in snap and len(snap["raw"]) == 360
