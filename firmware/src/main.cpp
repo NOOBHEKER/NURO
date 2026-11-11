@@ -30,15 +30,15 @@
 
 static nl_dsp_state_t g_dsp;
 static nl_snn_state_t g_snn;
-static uint8_t        g_state = NL_STATE_IDLE;
-static bool           g_armed = false;
+static uint8_t        g_state = NL_STATE_ARMED;
+static bool           g_armed = true;
 static uint16_t       g_budget_used = 0;
 static uint32_t       g_last_stim_us = 0;
 static int8_t         g_in_feat[NL_SNN_IN];
 
 static nl_dsp_out_t   g_last_dsp_out;
 static uint8_t        g_last_spikes = 0;
-static uint8_t        g_cur_led_r = 0, g_cur_led_g = 0, g_cur_led_b = 15;
+static uint8_t        g_cur_led_r = 0, g_cur_led_g = 15, g_cur_led_b = 0;
 static uint32_t       g_last_led_update_ms = 0;
 static uint32_t       g_red_led_until_ms = 0;
 static uint32_t       g_yellow_led_until_ms = 0;
@@ -93,25 +93,24 @@ static void update_live_status_led(bool is_burst, bool triggered, uint16_t env, 
     if (triggered) {
         // Red latch on burst trigger: hold for 250 ms so each pulse is a clean, solid indicator
         g_red_led_until_ms = now + 250;
+        g_yellow_led_until_ms = now + 400; // 250ms Red -> 150ms Yellow decay
         target_r = 30; target_g = 0; target_b = 0;
     } else if (now < g_red_led_until_ms) {
         target_r = 30; target_g = 0; target_b = 0; // 🔴 RED: Burst Trigger Delivered
-    } else if (color_hint == 2) {
-        // Explicit host yellow sync (matches TUI yellow when 0.35 <= cur_r < 0.65)
+    } else if (now < g_yellow_led_until_ms) {
+        target_r = 25; target_g = 20; target_b = 0; // 🟡 YELLOW latch decay
+    } else if (color_hint == 3 || is_burst) {
+        // High synchrony burst state: latch red for 250ms so it NEVER strobes/flashes rapidly
+        g_red_led_until_ms = now + 250;
+        g_yellow_led_until_ms = now + 400;
+        target_r = 30; target_g = 0; target_b = 0; // 🔴 RED
+    } else if (color_hint == 2 || env >= 220 || spikes >= 3) {
+        // Explicit host yellow sync or on-chip early warning coherence ramp
         g_yellow_led_until_ms = now + 150;
         target_r = 25; target_g = 20; target_b = 0; // 🟡 YELLOW
-    } else if (now < g_yellow_led_until_ms) {
-        target_r = 25; target_g = 20; target_b = 0; // 🟡 YELLOW latch
     } else if (color_hint == 1) {
         // Explicit host green sync (matches TUI green when cur_r < 0.35)
         target_r = 0; target_g = 15; target_b = 0;  // 🟢 GREEN
-    } else if (color_hint == 3 || is_burst) {
-        // Explicit host red sync or on-chip detected burst
-        target_r = 30; target_g = 0; target_b = 0;  // 🔴 RED
-    } else if (env >= 220 || spikes >= 3) {
-        // On-chip early warning coherence ramp
-        g_yellow_led_until_ms = now + 150;
-        target_r = 25; target_g = 20; target_b = 0; // 🟡 YELLOW
     } else {
         target_r = 0; target_g = 15; target_b = 0;  // 🟢 GREEN: Calm Resting State
     }
@@ -321,8 +320,7 @@ void setup() {
     Serial.println("  Core: Xtensa Dual-Core LX7 @ 240 MHz | Hardware FPU");
     Serial.println("  DSP: 61-tap Q15 Quadrature FIR | 64-neuron Int8 LIF SNN");
     Serial.println("  Stimulus Pin: GPIO 4 | RGB Status LED: GPIO 48/38");
-    Serial.println("  Status: 🟢 RESTING BASELINE ACTIVE");
-    Serial.println("  Gate: DISARMED (type 'arm' to enable GPIO4 pulses)");
+    Serial.println("  Status: 🟢 CLOSED-LOOP ARMED (1000 Hz lockstep active)");
     Serial.println("-------------------------------------------------------");
     Serial.println("  Type 'help' for command list");
     Serial.println("=======================================================");
