@@ -28,6 +28,23 @@ called.
   **`LICENSE`** (MIT), **`.github/workflows/ci.yml`**.
 - Hermetic port-ranking tests in `tests/test_board_ports.py`.
 
+### Verified on hardware (2026-11-11)
+
+- The N16R8 safety firmware was **flashed** to the board and boot-verified:
+  boot self-test PASS (16 MB flash, 8 MB octal PSRAM, MAC
+  `84:c7:bb:58:23:ec`), `arm` → ARMED → `disarm` checked live (5/5), watchdog
+  boots without a TWDT error. The 10 µs pulse remains a firmware value, not a
+  scope measurement.
+- Post-flash benchmark, 500 frames: p50 **1.28 ms**, p99 **1.42 ms**,
+  500/500 valid, 0 drops, 0 seq gaps, device DSP p50 18 µs.
+- `stim_pulses_fired: 0` is now the expected result of an un-armed run: the
+  board boots disarmed and the host never arms it automatically.
+- A second verified full-flash backup (`backups/20261111_140215`, SHA-256
+  `ba492bb2…`) records the flashed state; the pre-rebuild image remains at
+  `backups/20261110_203223`.
+- Figure 4 was regenerated from the post-flash run and now states the real
+  frame count and port.
+
 ### Changed
 
 - Firmware targets the real **ESP32-S3-WROOM-1-N16R8** (`firmware/boards/esp32s3_n16r8.json`,

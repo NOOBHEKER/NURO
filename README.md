@@ -18,14 +18,14 @@ This table is the short version. The full evidence ledger is [`docs/CLAIMS.md`](
 | 32-byte frames + CRC16-CCITT-FALSE, 2 Mbps UART | ✅ **Verified** by tests and live HIL runs |
 | 61-tap Q15 quadrature FIR, phase, 20 ms blanking | ✅ **Verified** in-silico; **implemented** on-device |
 | 64-neuron int8 LIF SNN | ⚠️ **Implemented**, but **weights are formula-initialised, not trained** |
-| Host↔board RTT p50 ≈ 1.26 ms, p99 ≈ 1.64 ms (500 frames) | ✅ **Verified** on the pre-rebuild firmware |
+| Host↔board RTT p50 ≈ 1.28 ms, p99 ≈ 1.42 ms (500 frames) | ✅ **Verified** on the current, flashed firmware |
 | G7 phase-locked vs random-phase sham (Kuramoto) | ✅ **Verified** in simulation |
 | G8 empirical PRC + bootstrap CIs | ✅ **Verified** in simulation |
 | G5 detector AUROC 0.9998 / G6 predictor AUROC 0.990, 53 s lead | 🧪 **Synthetic surrogate — NOT CHB-MIT** |
 | "1D-CNN" pre-ictal predictor | 🚧 **Planned**; current model is an int8 linear readout + exponential kernel |
 | CHB-MIT EDF ingestion / 23-patient split | 🚧 **Planned** (Phase 2) |
 | FreeRTOS task decomposition / custom USB transport | 🚧 **Planned**; current firmware is one Arduino `loop()` |
-| Task watchdog, explicit `arm` gate, 10 µs pulse | 🛠️ **Implemented and built**, not yet flashed/scope-verified |
+| Task watchdog, explicit `arm` gate, 10 µs pulse | 🛠️ **Flashed and boot-verified** (2026-11-11); pulse width not scope-measured |
 
 > **Do not cite the G5/G6 numbers as clinical or CHB-MIT results.** They come from signals generated inside this repository. The real-data pipeline is the next milestone.
 
@@ -100,6 +100,14 @@ Port selection is centralised in `host/board.py`:
 ```
 --port  >  NURO_PORT  >  auto-detected CH343/ESP32-S3  >  COM6 (Windows only)
 ```
+
+### Stimulation is opt-in
+
+The flashed firmware boots **disarmed**: GPIO4 stays low and `nuro bench` reports
+`stim_pulses_fired: 0` until someone types `arm` in the firmware REPL (`nuro term`).
+The host tools deliberately do not arm the board for you. A 5 s task watchdog, a
+boot self-test and a 20 ms artifact-blanking curtain are in the same build; see
+[`docs/RECOVERY.md`](docs/RECOVERY.md) before flashing anything.
 
 ---
 

@@ -25,20 +25,22 @@
 | 32-byte sample/result frames with CRC16-CCITT-FALSE | **VERIFIED** | `tests/test_suite.py::test_sample_and_result_frame_binary_contract`; golden `tests/golden/crc16_sample.json` | None. |
 | 61-tap Q15 quadrature FIR, phase, 20 ms blanking | **VERIFIED** (in-silico) / **IMPLEMENTED** (on-device) | `test_gate_g3_dsp_quadrature_phase_and_artifact_blanking`; firmware `components/dsp` | The on-device DSP is compiled but its latency was measured on the previous firmware image. |
 | 64-neuron int8 LIF SNN | **IMPLEMENTED** | `firmware/components/snn`; build succeeds | **Weights are formula-initialised, not trained.** It is a fixed random-ish projection, not a learned classifier. |
-| Hardware task watchdog | **IMPLEMENTED** | `init_watchdog()` in `firmware/src/main.cpp`; build succeeds | Not yet flashed or fault-injected on hardware. |
-| Explicit `arm` gate before GPIO4 | **IMPLEMENTED** | Boot defaults to `g_armed=false`; `sim burst` refuses when disarmed; `arm`/`disarm` commands | Not yet flashed. This is a safety improvement, not a measured result. |
-| 10 µs stimulation marker pulse on GPIO4 | **IMPLEMENTED** | `NL_STIM_PULSE_US = 10` + `delayMicroseconds()` | Previous firmware used ~1 µs; the 10 µs value is not yet measured on a scope. |
+| Hardware task watchdog | **VERIFIED** (boots clean) | `init_watchdog()` in `firmware/src/main.cpp`; flashed 2026-11-11; boot log shows no `TWDT already initialized` error; 1 kHz loop runs | Fault injection (deliberate hang) is **not** tested. The watchdog is armed, not proven to fire. |
+| Explicit `arm` gate before GPIO4 | **VERIFIED** (state machine) | Boot self-test prints `Arm gate: DISARMED`; `arm` → `[ARM] GPIO4 stimulation marker ENABLED` + status `ARMED`; `disarm` → `[DISARM]` + status `DISARMED`. Live 5/5 check on COM6, 2026-11-11, board left disarmed | Proves the gate changes state; it does not prove GPIO4 was electrically low. |
+| 10 µs stimulation marker pulse on GPIO4 | **IMPLEMENTED** and flashed | `NL_STIM_PULSE_US = 10` + `delayMicroseconds()`; boot self-test prints `Stim pulse: 10 us on GPIO4` | Firmware parameter only — **not measured on a scope**. Do not claim a verified pulse width. |
+| Stimulation requires an explicit `arm` | **VERIFIED** (state machine) | `if (g_armed && …)` guards every GPIO4 write in the HIL loop; `nuro bench` reports `stim_pulses_fired: 0` on a disarmed board | The host tools never arm automatically. A demo that shows pulses must arm the board first (firmware REPL). |
 | FreeRTOS task decomposition / custom USB transport | **PLANNED** | — | The current firmware is a single Arduino `loop()`. Do not claim FreeRTOS tasks or a custom USB stack. |
 
 ## Host-side performance
 
 | Claim | Status | Evidence | Caveat |
 |---|---|---|---|
-| Host round-trip p50 ≈ 1.26 ms, p99 ≈ 1.64 ms (500 frames) | **VERIFIED** | `runs/20261110_111749__lockstep__kuramoto__phase_locked/metrics.json` | Measured on the **pre-rebuild** firmware, COM6 @ 2 Mbps, 500/500 valid frames. Re-measure after flashing. |
-| Host round-trip p50 1.30 ms, p99 1.58 ms (1000 frames) | **VERIFIED** | `runs/20261109_173009__lockstep__kuramoto__phase_locked/metrics.json` | Same caveat. This is host↔board USB latency, not a clinical loop latency. |
-| Device DSP p50 20 µs / p99 27 µs | **VERIFIED** (reported by firmware) | Same run metrics | Values are self-reported by the firmware frame; they were not independently scoped. |
-| "Sub-5 ms closed loop" | **VERIFIED** for USB RTT | p99 1.64 ms < 5 ms | Do not extend this to "sub-5 ms therapeutic loop". |
-| 14/14 automated tests pass | **VERIFIED** | `.venv\Scripts\python -m pytest tests -q` → `14 passed` | Tests are hermetic: no golden writes, no Obsidian launch, figures to `tmp_path`. |
+| Host round-trip p50 1.28 ms, p99 1.42 ms (500 frames, **current firmware**) | **VERIFIED** | `runs/20261111_135815__lockstep__kuramoto__phase_locked/metrics.json` | Post-flash N16R8 build, COM6 @ 2 Mbps, 500/500 valid, 0 drops, 0 seq gaps. Host↔board USB latency, not a clinical loop latency. |
+| Host round-trip p50 1.26 ms, p99 1.64 ms (500 frames, pre-rebuild firmware) | **VERIFIED** (historical) | `runs/20261110_111749__lockstep__kuramoto__phase_locked/metrics.json` | Kept for comparison: the safety firmware changed p50 by +21 µs and p99 by −215 µs at n = 500. |
+| Host round-trip p50 1.30 ms, p99 1.58 ms (1000 frames, pre-rebuild firmware) | **VERIFIED** (historical) | `runs/20261109_173009__lockstep__kuramoto__phase_locked/metrics.json` | Same machine, same cable, earlier firmware. |
+| Device DSP p50 18 µs / p99 22 µs | **VERIFIED** (reported by firmware) | `runs/20261111_135815…/metrics.json`; pre-rebuild reported 20/27 µs | Values are self-reported by the firmware frame; they were not independently scoped. |
+| "Sub-5 ms closed loop" | **VERIFIED** for USB RTT | p99 1.42 ms < 5 ms | Do not extend this to "sub-5 ms therapeutic loop". |
+| 25/25 automated tests pass | **VERIFIED** | `.venv\Scripts\python -m pytest tests -q` → `25 passed` | Tests are hermetic: no golden writes, no Obsidian launch, figures to `tmp_path`. |
 
 ## Gates G5–G8 (model-level)
 

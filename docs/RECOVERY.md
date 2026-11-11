@@ -37,7 +37,7 @@
 | GPIO4 goes **only into the laptop's USB input / a jumper** | 3.3 V logic, 10 µs pulse; no electrode, no current source, no body |
 | Never feed 5 V into a 3.3 V pin | The LDO and the SoC are not 5 V tolerant |
 | Never use `erase-flash` "to fix it" | It destroys the bootloader, partition table and NVS; restore the backup instead |
-| Keep one USB cable on the **UART** port for flashing/logs | The native USB port is for the data link |
+| Keep the USB cable on the **UART** port for the data link | `Serial` is UART0; the CH343 bridge carries the 2 Mbps HIL stream. The native USB port is for flashing/debug and does not carry `Serial` with this firmware |
 
 ---
 
@@ -139,8 +139,14 @@ Board not responding?
 
 | Date | Git tag / commit | Backup folder | SHA-256 (first 16) | Verified |
 |---|---|---|---|---|
-| 2026-11-10 | `pre-rebuild-2026-11-10` | `backups/20261110_203223` | `9f4f013c0cf6ba85` | ✅ byte-for-byte |
+| 2026-11-10 | `pre-rebuild-2026-11-10` (`456b5b4`) | `backups/20261110_203223` | `9f4f013c0cf6ba85` | ✅ byte-for-byte |
+| 2026-11-11 | `1c5cd35` + built firmware | `backups/20261111_140215` | `ba492bb215feafaf` | ✅ byte-for-byte |
 
+> The 2026-11-11 backup is the **current** state: N16R8 safety firmware
+> (boot self-test, disarmed `arm` gate, 5 s watchdog, 10 µs pulse) as flashed and
+> boot-verified that day. The 2026-11-10 image remains the pre-rebuild recovery
+> point.
+>
 > Update this table after every known-good firmware change. The full hash lives
 > in `backups/<timestamp>/manifest.json`.
 
