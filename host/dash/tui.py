@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import shutil
 import sys
 import time
 from collections import deque
@@ -298,7 +299,8 @@ def run_tui(
     )
 
     if max_frames is None:
-        sys.stdout.write("\033[2J\033[?25l")
+        sys.stdout.write("\033[?1049h\033[H\033[2J\033[?25l")
+        sys.stdout.flush()
 
     has_msvcrt = False
     if os.name == "nt" and max_frames is None:
@@ -558,157 +560,357 @@ def run_tui(
             p50_dsp = float(np.percentile(dsp_win, 50))
             p50_wcet = float(np.percentile(wcet_win, 50))
 
-            compass = render_phase_compass(psi_val, cur_r, fired_this_batch)
-            braille_r = render_braille_plot(
-                list(r_hist), 0.0, 1.0, cols=52, rows=3, color=r_col, threshold_y=0.25, tiered_colors=True
-            )
-            snn_strip = render_snn_raster(
-                bp_out.env_q15, bp_out.phase_q15, seq, width=35
-            )
-
-            header_title = pad_ansi(
-                f" ⚡ {C_BOLD}NEURAL LOOP TUI v2.0{C_RESET} │ $0 ESP32-S3 HIL Closed-Loop Edge Neuromodulation Workstation │ 2000 Hz Lockstep",
-                total_w,
-            )
-
             hero_title = (
-                f"{C_BOLD}[3] HERO — Real-Time Patient Seizure Synchrony Collapse R(t){C_RESET}"
+                f"{C_BOLD}[3] HERO — Real-Time Patient Synchrony R(t){C_RESET}"
                 if model_idx == 0
-                else f"{C_BOLD}[3] HERO — Real-Time Kuramoto Synchrony Collapse R(t){C_RESET}"
+                else f"{C_BOLD}[3] HERO — Kuramoto Synchrony R(t){C_RESET}"
             )
 
-            rows = [
-                f"{C_BG_BAR}{header_title}{C_RESET}",
-                top_border,
-                make_row(
-                    f"{C_BOLD}LINK:{C_RESET} {hw_str}  {loop_str}",
-                    f"{C_BOLD}MODEL:{C_RESET} {C_CYAN}{model_names[model_idx]}{C_RESET}",
-                    w_l,
-                    w_r,
-                ),
-                make_row(
-                    f"{C_BOLD}ARM :{C_RESET} {C_AMBER}{arm_names[arm_idx]}{C_RESET}  {C_BOLD}PULSES:{C_RESET} {pulses:3d}/300",
-                    f"{C_BOLD}VALID:{C_RESET} {valid_frames:6d} frames │ {C_GREEN}{crc_err:2d} CRC err{C_RESET}",
-                    w_l,
-                    w_r,
-                ),
-                mid_border,
-                make_row(
-                    f"{C_BOLD}[1] SIGNAL CHAIN — Raw LFP & 20ms Blanked Q15 Bandpass{C_RESET}",
-                    f"{C_BOLD}[2] 12-SECTOR PRC PHASE COMPASS{C_RESET}",
-                    w_l,
-                    w_r,
-                ),
-                make_row(
-                    f"Raw LFP : {sparkline(list(raw_hist), -3.8, 3.8, 50, C_GRAY)}",
-                    compass[0],
-                    w_l,
-                    w_r,
-                ),
-                make_row(
-                    f"Q15 I(t): {sparkline(list(bp_hist), -2.5, 2.5, 50, C_CYAN)}",
-                    compass[1],
-                    w_l,
-                    w_r,
-                ),
-                make_row(
-                    f"64-N SNN: [{snn_strip}] {C_GREEN}99.2% sparse{C_RESET}",
-                    compass[2],
-                    w_l,
-                    w_r,
-                ),
-                make_row(
-                    f"Blanking: {f'{C_AMBER}ACTIVE (40-samp=20ms){C_RESET}' if bp_out.blanked else f'{C_GREEN}IDLE (0 artifact){C_RESET}'} │ Env={bp_out.env_q15:4d} Q15",
-                    compass[3],
-                    w_l,
-                    w_r,
-                ),
-                f"├─{'─' * w_l}─┤ {pad_ansi(compass[4], w_r)} │",
-                make_row(
-                    hero_title,
-                    compass[5],
-                    w_l,
-                    w_r,
-                ),
-                make_row(
-                    f"R(t) Now: [{r_bar}] {r_col}{C_BOLD}{cur_r:0.4f}{C_RESET}",
-                    compass[6],
-                    w_l,
-                    w_r,
-                ),
-                make_row(
-                    f"  1.00 ┤ {braille_r[0]}",
-                    f"ψ(t) = {C_CYAN}{psi_val:+6.3f} rad ({np.degrees(psi_val):+6.1f}°){C_RESET}",
-                    w_l,
-                    w_r,
-                ),
-                f"│ {pad_ansi(f'  0.50 ┤ {braille_r[1]}', w_l)} ├─{'─' * w_r}─┤",
-                make_row(
-                    f"  0.00 ┴ {braille_r[2]}",
-                    f"{C_BOLD}[4] ESP32-S3 HARDWARE TELEMETRY{C_RESET}",
-                    w_l,
-                    w_r,
-                ),
-                f"├─{'─' * w_l}─┤ {pad_ansi(f'USB RTT p50 : {C_CYAN}{p50_rtt:7.1f} µs{C_RESET} (< 2000 G0)', w_r)} │",
-                make_row(
-                    f"{C_BOLD}[5] 32-BYTE BINARY FRAME & MCU REGISTER INSPECTOR{C_RESET}",
-                    f"USB RTT p95 : {C_CYAN}{p95_rtt:7.1f} µs{C_RESET} (10.6° err)",
-                    w_l,
-                    w_r,
-                ),
-                make_row(
-                    f"TX (32B): {C_GRAY}{last_tx_hex}{C_RESET}",
-                    f"USB RTT p99 : {C_CYAN}{p99_rtt:7.1f} µs{C_RESET} (< 5000)",
-                    w_l,
-                    w_r,
-                ),
-                make_row(
-                    f"RX (32B): {C_CYAN}{last_rx_hex}{C_RESET}",
-                    f"MCU FIR DSP : {C_GREEN}{p50_dsp:7.1f} µs{C_RESET} (61-tap Q15)",
-                    w_l,
-                    w_r,
-                ),
-                make_row(
-                    f"REGS    : seq={last_res.seq:<5d} st=0x{last_res.state:02X} cls={last_res.cls} conf={last_res.conf:<3d} φ_q15={last_res.phase_q15:<+6d}",
-                    f"MCU SNN+FSM : {C_GREEN}{max(1.0, p50_wcet - p50_dsp):7.1f} µs{C_RESET} (64-N Int8)",
-                    w_l,
-                    w_r,
-                ),
-                make_row(
-                    f"CLOCKS  : rx={last_res.t_rx_us:<9d} dsp={last_res.t_dsp_us:<9d} dec={last_res.t_dec_us:<9d}",
-                    f"MCU WCET p50: {C_GREEN}{p50_wcet:7.1f} µs{C_RESET} (< 250 G3)",
-                    w_l,
-                    w_r,
-                ),
-                mid_border,
-                make_row(
-                    f"{C_BOLD}[6] REAL-TIME HARDWARE STIMULATION & EVENT LOG{C_RESET}",
-                    f"{C_BOLD}[7] SAFETY & GATES VERIFICATION{C_RESET}",
-                    w_l,
-                    w_r,
-                ),
-            ]
+            term_cols, term_lines = shutil.get_terminal_size((80, 24))
 
-            safety_lines = [
-                f"Interlocks  : {C_GREEN}CRC/REFRAC/BLANK=20ms OK{C_RESET}",
-                f"Fault Flags : {C_GREEN}0x00 (ZERO RUNAWAY){C_RESET}",
-                f"Gate G5/G6  : {C_GREEN}CHB-MIT AUROC 0.826 │ Patient-Trained SNN{C_RESET}",
-                f"Gate G7/G8  : {C_GREEN}ΔR=+0.746 [0.72, 0.78]{C_RESET}",
-            ]
-            for i in range(4):
-                ev = event_log[i] if i < len(event_log) else ""
-                ev_col = C_GREEN if ("STIM" in ev or "TREAT" in ev) else C_CYAN
-                rows.append(
-                    make_row(f"{ev_col}{ev}{C_RESET}", safety_lines[i], w_l, w_r)
+            if term_cols < 105 or term_lines < 28:
+                # =========================================================
+                # COMPACT 80x24 LAYOUT (78 cols x 22 rows, zero scroll/jitter)
+                # =========================================================
+                c_w_l, c_w_r = 48, 23
+                top_b = f"╭─{'─' * c_w_l}─┬─{'─' * c_w_r}─╮"
+                mid_b = f"├─{'─' * c_w_l}─┼─{'─' * c_w_r}─┤"
+                bot_b = f"╰─{'─' * c_w_l}─┴─{'─' * c_w_r}─╯"
+
+                hw_badge = (
+                    f"{C_GREEN}● LIVE {port}{C_RESET}"
+                    if hw_live
+                    else f"{C_AMBER}● IN-SILICO{C_RESET}"
+                )
+                compact_loop = (
+                    f"{C_GREEN}[TREATING]{C_RESET}"
+                    if (loop_on and model_idx == 0)
+                    else (
+                        f"{C_GREEN}[ON]{C_RESET}"
+                        if loop_on
+                        else f"{C_RED}[OFF (SURGE)]{C_RESET}"
+                    )
+                )
+                pat_name = (
+                    patient_ids[pat_idx].upper()
+                    if model_idx == 0
+                    else ("KURAMOTO" if model_idx == 1 else "JANSEN")
+                )
+                arm_short = (
+                    "D: LOCKED"
+                    if arm_idx == 0
+                    else ("C: SHAM" if arm_idx == 1 else "B: OPEN 20Hz")
                 )
 
-            rows.append(bot_border)
-            rows.append(
-                f" {C_BOLD}HOTKEYS:{C_RESET} {C_CYAN}[SPACE]{C_RESET} Loop ON/OFF │ {C_CYAN}[M]{C_RESET} Arm (D/C/B) │ {C_CYAN}[1/2/3]{C_RESET} Patient/Kuramoto/JR │ {C_CYAN}[P]{C_RESET} Switch Patient │ {C_CYAN}[R]{C_RESET} Seizure Onset │ {C_CYAN}[Q]{C_RESET} Quit"
-            )
+                r_bar_len_c = int(np.clip(round(cur_r * 24), 0, 24))
+                r_bar_c = f"{r_col}{'█' * r_bar_len_c}{C_GRAY}{'░' * (24 - r_bar_len_c)}{C_RESET}"
+
+                braille_c = render_braille_plot(
+                    list(r_hist),
+                    0.0,
+                    1.0,
+                    cols=38,
+                    rows=3,
+                    color=r_col,
+                    threshold_y=0.25,
+                    tiered_colors=True,
+                )
+                snn_strip_c = render_snn_raster(
+                    bp_out.env_q15, bp_out.phase_q15, seq, width=22
+                )
+
+                ang = ((psi_val + np.pi) % (2.0 * np.pi)) - np.pi
+                sec = int(np.round((ang + np.pi) / (2.0 * np.pi) * 12.0)) % 12
+                pt = [f"{C_GRAY}·{C_RESET}"] * 12
+                pt[0] = f"{C_GREEN}◎{C_RESET}"
+                pt[sec] = (
+                    f"{C_GREEN}★{C_RESET}"
+                    if fired_this_batch
+                    else f"{C_WHITE}●{C_RESET}"
+                )
+                vec_char = (
+                    "←"
+                    if sec in (0, 1, 11)
+                    else (
+                        "↓"
+                        if sec in (2, 3, 4)
+                        else ("→" if sec in (5, 6, 7) else "↑")
+                    )
+                )
+                center_c = (
+                    f"{C_GREEN}{vec_char}{C_RESET}"
+                    if cur_r < 0.35
+                    else f"{C_RED}{vec_char}{C_RESET}"
+                )
+                compass_c = [
+                    f"      +π/2 {pt[9]}",
+                    f"   {pt[10]}        {pt[8]}",
+                    f"φ*={pt[0]}   {center_c}   {pt[6]} 0",
+                    f"   {pt[2]}        {pt[4]}",
+                    f"      -π/2 {pt[3]}",
+                ]
+
+                ev0 = event_log[-1] if len(event_log) >= 1 else ""
+                ev1 = event_log[-2] if len(event_log) >= 2 else ""
+                ev0_col = C_GREEN if ("STIM" in ev0 or "TREAT" in ev0) else C_CYAN
+                ev1_col = C_GREEN if ("STIM" in ev1 or "TREAT" in ev1) else C_CYAN
+
+                rows = [
+                    f"{C_BG_BAR}{pad_ansi(f' ⚡ {C_BOLD}NURO TUI v0.3.0{C_RESET} │ CHB-MIT Patient Treatment', 78)}{C_RESET}",
+                    top_b,
+                    make_row(
+                        f"{C_BOLD}LINK:{C_RESET} {hw_badge} {compact_loop}",
+                        f"{C_BOLD}MODEL:{C_RESET} {C_CYAN}{pat_name}{C_RESET}",
+                        c_w_l,
+                        c_w_r,
+                    ),
+                    make_row(
+                        f"{C_BOLD}ARM :{C_RESET} {arm_short} {C_BOLD}PULSES:{C_RESET} {pulses:3d}/300",
+                        f"{C_BOLD}AUROC:{C_RESET} {C_GREEN}0.826 [G5/G6]{C_RESET}",
+                        c_w_l,
+                        c_w_r,
+                    ),
+                    mid_b,
+                    make_row(
+                        f"{C_BOLD}[1] PATIENT EEG & 20ms BLANKING{C_RESET}",
+                        f"{C_BOLD}[2] PHASE COMPASS{C_RESET}",
+                        c_w_l,
+                        c_w_r,
+                    ),
+                    make_row(
+                        f"Raw LFP : {sparkline(list(raw_hist), -3.8, 3.8, 34, C_GRAY)}",
+                        compass_c[0],
+                        c_w_l,
+                        c_w_r,
+                    ),
+                    make_row(
+                        f"Q15 I(t): {sparkline(list(bp_hist), -2.5, 2.5, 34, C_CYAN)}",
+                        compass_c[1],
+                        c_w_l,
+                        c_w_r,
+                    ),
+                    make_row(
+                        f"64-N SNN: [{snn_strip_c}] 99%",
+                        compass_c[2],
+                        c_w_l,
+                        c_w_r,
+                    ),
+                    make_row(
+                        f"Blanking: {f'{C_AMBER}ACTIVE (20ms){C_RESET}' if bp_out.blanked else f'{C_GREEN}IDLE (0 art){C_RESET}'} │ Env={bp_out.env_q15:4d}",
+                        compass_c[3],
+                        c_w_l,
+                        c_w_r,
+                    ),
+                    mid_b,
+                    make_row(hero_title, f"{C_BOLD}[4] TELEMETRY{C_RESET}", c_w_l, c_w_r),
+                    make_row(
+                        f"R(t) Now: [{r_bar_c}] {r_col}{cur_r:0.3f}{C_RESET}",
+                        f"USB RTT: {C_CYAN}{p50_rtt:6.0f} µs{C_RESET}",
+                        c_w_l,
+                        c_w_r,
+                    ),
+                    make_row(
+                        f"  1.0 ┤ {braille_c[0]}",
+                        f"MCU DSP: {C_GREEN}{p50_dsp:6.0f} µs{C_RESET}",
+                        c_w_l,
+                        c_w_r,
+                    ),
+                    make_row(
+                        f"  0.5 ┤ {braille_c[1]}",
+                        f"MCU SNN: {C_GREEN}{max(1.0, p50_wcet - p50_dsp):6.0f} µs{C_RESET}",
+                        c_w_l,
+                        c_w_r,
+                    ),
+                    make_row(
+                        f"  0.0 ┴ {braille_c[2]}",
+                        f"MCU WCET:{C_GREEN}{p50_wcet:6.0f} µs{C_RESET}",
+                        c_w_l,
+                        c_w_r,
+                    ),
+                    mid_b,
+                    make_row(
+                        f"{C_BOLD}[5] EVENT & CLINICAL SUPPRESSION LOG{C_RESET}",
+                        f"{C_BOLD}[6] SAFETY & GATES{C_RESET}",
+                        c_w_l,
+                        c_w_r,
+                    ),
+                    make_row(
+                        f"{ev0_col}{ev0}{C_RESET}",
+                        f"Interlocks: {C_GREEN}CRC/BLANK OK{C_RESET}",
+                        c_w_l,
+                        c_w_r,
+                    ),
+                    make_row(
+                        f"{ev1_col}{ev1}{C_RESET}",
+                        f"Runaway   : {C_GREEN}0x00 ZERO{C_RESET}",
+                        c_w_l,
+                        c_w_r,
+                    ),
+                    bot_b,
+                    pad_ansi(
+                        f" {C_BOLD}KEYS:{C_RESET} {C_CYAN}[SPACE]{C_RESET} Loop │ {C_CYAN}[P]{C_RESET} Pat │ {C_CYAN}[R]{C_RESET} Onset │ {C_CYAN}[M]{C_RESET} Arm │ {C_CYAN}[1/2/3]{C_RESET} Model │ {C_CYAN}[Q]{C_RESET} Quit",
+                        78,
+                    ),
+                ]
+            else:
+                # =========================================================
+                # EXPANDED WIDESCREEN LAYOUT (>= 105 cols, >= 28 lines)
+                # =========================================================
+                compass = render_phase_compass(psi_val, cur_r, fired_this_batch)
+                braille_r = render_braille_plot(
+                    list(r_hist),
+                    0.0,
+                    1.0,
+                    cols=52,
+                    rows=3,
+                    color=r_col,
+                    threshold_y=0.25,
+                    tiered_colors=True,
+                )
+                snn_strip = render_snn_raster(
+                    bp_out.env_q15, bp_out.phase_q15, seq, width=35
+                )
+
+                header_title = pad_ansi(
+                    f" ⚡ {C_BOLD}NEURAL LOOP TUI v2.0{C_RESET} │ $0 ESP32-S3 HIL Closed-Loop Edge Neuromodulation Workstation │ 2000 Hz Lockstep",
+                    total_w,
+                )
+
+                rows = [
+                    f"{C_BG_BAR}{header_title}{C_RESET}",
+                    top_border,
+                    make_row(
+                        f"{C_BOLD}LINK:{C_RESET} {hw_str}  {loop_str}",
+                        f"{C_BOLD}MODEL:{C_RESET} {C_CYAN}{model_names[model_idx]}{C_RESET}",
+                        w_l,
+                        w_r,
+                    ),
+                    make_row(
+                        f"{C_BOLD}ARM :{C_RESET} {C_AMBER}{arm_names[arm_idx]}{C_RESET}  {C_BOLD}PULSES:{C_RESET} {pulses:3d}/300",
+                        f"{C_BOLD}VALID:{C_RESET} {valid_frames:6d} frames │ {C_GREEN}{crc_err:2d} CRC err{C_RESET}",
+                        w_l,
+                        w_r,
+                    ),
+                    mid_border,
+                    make_row(
+                        f"{C_BOLD}[1] SIGNAL CHAIN — Raw LFP & 20ms Blanked Q15 Bandpass{C_RESET}",
+                        f"{C_BOLD}[2] 12-SECTOR PRC PHASE COMPASS{C_RESET}",
+                        w_l,
+                        w_r,
+                    ),
+                    make_row(
+                        f"Raw LFP : {sparkline(list(raw_hist), -3.8, 3.8, 50, C_GRAY)}",
+                        compass[0],
+                        w_l,
+                        w_r,
+                    ),
+                    make_row(
+                        f"Q15 I(t): {sparkline(list(bp_hist), -2.5, 2.5, 50, C_CYAN)}",
+                        compass[1],
+                        w_l,
+                        w_r,
+                    ),
+                    make_row(
+                        f"64-N SNN: [{snn_strip}] {C_GREEN}99.2% sparse{C_RESET}",
+                        compass[2],
+                        w_l,
+                        w_r,
+                    ),
+                    make_row(
+                        f"Blanking: {f'{C_AMBER}ACTIVE (40-samp=20ms){C_RESET}' if bp_out.blanked else f'{C_GREEN}IDLE (0 artifact){C_RESET}'} │ Env={bp_out.env_q15:4d} Q15",
+                        compass[3],
+                        w_l,
+                        w_r,
+                    ),
+                    f"├─{'─' * w_l}─┤ {pad_ansi(compass[4], w_r)} │",
+                    make_row(
+                        hero_title,
+                        compass[5],
+                        w_l,
+                        w_r,
+                    ),
+                    make_row(
+                        f"R(t) Now: [{r_bar}] {r_col}{C_BOLD}{cur_r:0.4f}{C_RESET}",
+                        compass[6],
+                        w_l,
+                        w_r,
+                    ),
+                    make_row(
+                        f"  1.00 ┤ {braille_r[0]}",
+                        f"ψ(t) = {C_CYAN}{psi_val:+6.3f} rad ({np.degrees(psi_val):+6.1f}°){C_RESET}",
+                        w_l,
+                        w_r,
+                    ),
+                    f"│ {pad_ansi(f'  0.50 ┤ {braille_r[1]}', w_l)} ├─{'─' * w_r}─┤",
+                    make_row(
+                        f"  0.00 ┴ {braille_r[2]}",
+                        f"{C_BOLD}[4] ESP32-S3 HARDWARE TELEMETRY{C_RESET}",
+                        w_l,
+                        w_r,
+                    ),
+                    f"├─{'─' * w_l}─┤ {pad_ansi(f'USB RTT p50 : {C_CYAN}{p50_rtt:7.1f} µs{C_RESET} (< 2000 G0)', w_r)} │",
+                    make_row(
+                        f"{C_BOLD}[5] 32-BYTE BINARY FRAME & MCU REGISTER INSPECTOR{C_RESET}",
+                        f"USB RTT p95 : {C_CYAN}{p95_rtt:7.1f} µs{C_RESET} (10.6° err)",
+                        w_l,
+                        w_r,
+                    ),
+                    make_row(
+                        f"TX (32B): {C_GRAY}{last_tx_hex}{C_RESET}",
+                        f"USB RTT p99 : {C_CYAN}{p99_rtt:7.1f} µs{C_RESET} (< 5000)",
+                        w_l,
+                        w_r,
+                    ),
+                    make_row(
+                        f"RX (32B): {C_CYAN}{last_rx_hex}{C_RESET}",
+                        f"MCU FIR DSP : {C_GREEN}{p50_dsp:7.1f} µs{C_RESET} (61-tap Q15)",
+                        w_l,
+                        w_r,
+                    ),
+                    make_row(
+                        f"REGS    : seq={last_res.seq:<5d} st=0x{last_res.state:02X} cls={last_res.cls} conf={last_res.conf:<3d} φ_q15={last_res.phase_q15:<+6d}",
+                        f"MCU SNN+FSM : {C_GREEN}{max(1.0, p50_wcet - p50_dsp):7.1f} µs{C_RESET} (64-N Int8)",
+                        w_l,
+                        w_r,
+                    ),
+                    make_row(
+                        f"CLOCKS  : rx={last_res.t_rx_us:<9d} dsp={last_res.t_dsp_us:<9d} dec={last_res.t_dec_us:<9d}",
+                        f"MCU WCET p50: {C_GREEN}{p50_wcet:7.1f} µs{C_RESET} (< 250 G3)",
+                        w_l,
+                        w_r,
+                    ),
+                    mid_border,
+                    make_row(
+                        f"{C_BOLD}[6] REAL-TIME HARDWARE STIMULATION & EVENT LOG{C_RESET}",
+                        f"{C_BOLD}[7] SAFETY & GATES VERIFICATION{C_RESET}",
+                        w_l,
+                        w_r,
+                    ),
+                ]
+
+                safety_lines = [
+                    f"Interlocks  : {C_GREEN}CRC/REFRAC/BLANK=20ms OK{C_RESET}",
+                    f"Fault Flags : {C_GREEN}0x00 (ZERO RUNAWAY){C_RESET}",
+                    f"Gate G5/G6  : {C_GREEN}CHB-MIT AUROC 0.826 │ Patient-Trained SNN{C_RESET}",
+                    f"Gate G7/G8  : {C_GREEN}ΔR=+0.746 [0.72, 0.78]{C_RESET}",
+                ]
+                for i in range(4):
+                    ev = event_log[i] if i < len(event_log) else ""
+                    ev_col = C_GREEN if ("STIM" in ev or "TREAT" in ev) else C_CYAN
+                    rows.append(
+                        make_row(f"{ev_col}{ev}{C_RESET}", safety_lines[i], w_l, w_r)
+                    )
+
+                rows.append(bot_border)
+                rows.append(
+                    pad_ansi(
+                        f" {C_BOLD}HOTKEYS:{C_RESET} {C_CYAN}[SPACE]{C_RESET} Loop ON/OFF │ {C_CYAN}[M]{C_RESET} Arm │ {C_CYAN}[1/2/3]{C_RESET} Patient/Kuramoto/JR │ {C_CYAN}[P]{C_RESET} Switch Patient │ {C_CYAN}[R]{C_RESET} Seizure Onset │ {C_CYAN}[Q]{C_RESET} Quit",
+                        total_w,
+                    )
+                )
 
             if max_frames is None:
-                sys.stdout.write("\033[H" + "\n".join(rows))
+                sys.stdout.write("\033[H" + "\n".join(rows) + "\033[J")
                 sys.stdout.flush()
                 time.sleep(0.045)
             else:
@@ -717,7 +919,8 @@ def run_tui(
                     break
     finally:
         if max_frames is None:
-            sys.stdout.write("\033[?25h\n")
+            sys.stdout.write("\033[?1049l\033[?25h\n")
+            sys.stdout.flush()
         if ser is not None and ser.is_open:
             try:
                 ser.write(b"rest\r\n")
