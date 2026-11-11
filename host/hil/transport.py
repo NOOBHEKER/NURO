@@ -111,12 +111,13 @@ def run_hil_benchmark(
         t0_ns = time.perf_counter_ns()
         h_us = (t0_ns // 1_000) & 0xFFFFFFFF
 
+        host_color = 0x10 if r1 < 0.35 else (0x20 if r1 < 0.65 else 0x30)
         frame = SampleFrame(
             seq=seq,
             sim_t_us=sim_t_us,
             host_t_us=h_us,
             samples=(s0, s1, 0, 0),
-            flags=0x03,  # bit0=lockstep, bit1=arm-hint
+            flags=0x03 | host_color,  # bit0=lockstep, bit1=arm-hint, bit4-5=color_hint
             n_ch=1,
             n_samp=2,
             mode=MODE_LOCKSTEP,

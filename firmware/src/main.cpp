@@ -41,7 +41,6 @@ static uint8_t        g_last_spikes = 0;
 static uint8_t        g_cur_led_r = 0, g_cur_led_g = 15, g_cur_led_b = 0;
 static uint32_t       g_last_led_update_ms = 0;
 static uint32_t       g_red_led_until_ms = 0;
-static uint32_t       g_yellow_led_until_ms = 0;
 
 /* Deterministic int8 SNN weights (row-major [HID][IN] for L1 cache & SIMD locality) */
 static int8_t g_w1[NL_SNN_HID][NL_SNN_IN];
@@ -93,26 +92,27 @@ static void update_live_status_led(bool is_burst, bool triggered, uint16_t env, 
     if (triggered) {
         // Red latch on burst trigger: hold for 250 ms so each pulse is a clean, solid indicator
         g_red_led_until_ms = now + 250;
-        g_yellow_led_until_ms = now + 400; // 250ms Red -> 150ms Yellow decay
-        target_r = 30; target_g = 0; target_b = 0;
+        target_r = 30; target_g = 0; target_b = 0; // 🔴 Solid RED on stimulation pulse
     } else if (now < g_red_led_until_ms) {
-        target_r = 30; target_g = 0; target_b = 0; // 🔴 RED: Burst Trigger Delivered
-    } else if (now < g_yellow_led_until_ms) {
-        target_r = 25; target_g = 20; target_b = 0; // 🟡 YELLOW latch decay
-    } else if (color_hint == 3 || is_burst) {
-        // High synchrony burst state: latch red for 250ms so it NEVER strobes/flashes rapidly
-        g_red_led_until_ms = now + 250;
-        g_yellow_led_until_ms = now + 400;
-        target_r = 30; target_g = 0; target_b = 0; // 🔴 RED
-    } else if (color_hint == 2 || env >= 220 || spikes >= 3) {
-        // Explicit host yellow sync or on-chip early warning coherence ramp
-        g_yellow_led_until_ms = now + 150;
-        target_r = 25; target_g = 20; target_b = 0; // 🟡 YELLOW
+        target_r = 30; target_g = 0; target_b = 0; // 🔴 Solid RED during 250ms pulse marker
     } else if (color_hint == 1) {
-        // Explicit host green sync (matches TUI green when cur_r < 0.35)
+        // Explicit host green: R(t) < 0.35 in terminal -> ALWAYS GREEN
         target_r = 0; target_g = 15; target_b = 0;  // 🟢 GREEN
+    } else if (color_hint == 2) {
+        // Explicit host yellow: 0.35 <= R(t) < 0.65 in terminal -> ALWAYS YELLOW
+        target_r = 25; target_g = 20; target_b = 0; // 🟡 YELLOW
+    } else if (color_hint == 3) {
+        // Explicit host red: R(t) >= 0.65 in terminal -> 🔴 RED
+        target_r = 30; target_g = 0; target_b = 0;  // 🔴 RED
     } else {
-        target_r = 0; target_g = 15; target_b = 0;  // 🟢 GREEN: Calm Resting State
+        // Standalone / Idle fallback when no host color hint is present (color_hint == 0)
+        if (is_burst) {
+            target_r = 30; target_g = 0; target_b = 0;  // 🔴 RED
+        } else if (env >= 450 || spikes >= 3) {
+            target_r = 25; target_g = 20; target_b = 0;  // 🟡 YELLOW
+        } else {
+            target_r = 0; target_g = 15; target_b = 0;   // 🟢 GREEN: Calm Resting State
+        }
     }
 
     // Rate-limit physical WS2812 writes to >= 30 ms and only on actual color change
@@ -332,11 +332,11 @@ void loop() {
     esp_task_wdt_reset();
 
     /* 0. Idle / Static LED refresh:
-     * When no frames are arriving, decay physical LED back to calm resting Green
-     * (or Blue if disarmed) once the Red (250ms) and Yellow (150ms) latches expire.
+     * When no frames are arriving, restore physical LED to calm resting Green
+     * once the Red (250ms) stimulation latch expires.
      */
     uint32_t now_idle = millis();
-    if (now_idle >= g_red_led_until_ms && now_idle >= g_yellow_led_until_ms && (now_idle - g_last_led_update_ms >= 50)) {
+    if (now_idle >= g_red_led_until_ms && (now_idle - g_last_led_update_ms >= 50)) {
         update_live_status_led(false, false, 0, 0, 0);
     }
 
@@ -409,12 +409,25 @@ void loop() {
         g_last_spikes = spike_count;
         uint32_t t_dec = (uint32_t)esp_timer_get_time();
 
+        /* Extract host synchrony color hint from frame flags:
+         * 0 = Auto/standalone, 1 = Green (calm R<0.35), 2 = Yellow (0.35<=R<0.65), 3 = Red (burst R>=0.65)
+         */
+        uint8_t color_hint = (in_frame->flags >> 4) & 0x03U;
+
         /* Phase-locked controller decision:
          * Compensate 61-tap FIR group delay (30 samples = 15 ms = +0.6*pi rad = +19661 Q15 at 20 Hz).
          * Target phase is trough (+/- pi -> |comp_phase_q15| >= 25000) when burst detected.
          */
         int16_t comp_phase_q15 = (int16_t)(dsp_out1.phase_q15 + 19661);
-        bool is_burst = (!dsp_out1.blanked) && (spike_count >= 4 || dsp_out1.env_q15 >= 320);
+        bool is_burst = false;
+        if (color_hint == 3) {
+            is_burst = (!dsp_out1.blanked);
+        } else if (color_hint == 1 || color_hint == 2) {
+            is_burst = false;
+        } else {
+            // Standalone mode: derive from SNN spikes & envelope
+            is_burst = (!dsp_out1.blanked) && (spike_count >= 4 || dsp_out1.env_q15 >= 600);
+        }
         int32_t abs_phase = (comp_phase_q15 < 0) ? -(int32_t)comp_phase_q15 : (int32_t)comp_phase_q15;
         bool in_target_phase = (abs_phase >= 25000);
         bool refractory_ok = ((t_dec - g_last_stim_us) >= 15000U);
@@ -449,7 +462,6 @@ void loop() {
         }
 
         /* Update WS2812 RGB LED with 250ms hold latch & rate-limiting (prevents rapid strobing) */
-        uint8_t color_hint = (in_frame->flags >> 4) & 0x03U;
         update_live_status_led(is_burst, triggered, dsp_out1.env_q15, spike_count, color_hint);
 
         nl_result_frame_t out_frame;
