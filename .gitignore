@@ -6,6 +6,7 @@ __pycache__/
 dist/
 data/raw/
 runs/*
+!runs/*/
 !runs/*/metrics.json
 backups/*
 !backups/README.md
