@@ -284,12 +284,15 @@ static void init_watchdog(void) {
     cfg.timeout_ms = NL_WDT_TIMEOUT_MS;
     cfg.idle_core_mask = 0;
     cfg.trigger_panic = true;
-    esp_err_t err = esp_task_wdt_init(&cfg);
+    /* The Arduino core may already own the TWDT. Reconfigure it first so the
+       boot log stays clean; initialise only when no TWDT exists yet. */
+    esp_err_t err = esp_task_wdt_reconfigure(&cfg);
     if (err == ESP_ERR_INVALID_STATE) {
-        /* Arduino may have initialized the TWDT already; adopt our timeout. */
-        esp_task_wdt_reconfigure(&cfg);
+        err = esp_task_wdt_init(&cfg);
     }
-    esp_task_wdt_add(NULL);
+    if (err == ESP_OK) {
+        esp_task_wdt_add(NULL);
+    }
 }
 
 void setup() {
