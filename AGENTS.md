@@ -8,8 +8,9 @@ Read this before changing firmware, tests, figures, or public claims.
 
 ## 1. Board safety (non-negotiable)
 
-- **Never flash without the user's explicit approval.** The last verified
-  full-flash backup is `backups/20261110_203223` (git-ignored). If it is
+- **Never flash without the user's explicit approval.** The verified full-flash
+  backups are `backups/20261110_203223` (pre-rebuild) and
+  `backups/20261111_140215` (current firmware); both are git-ignored. If one is
   missing, take a new backup with `python tools/board_backup.py` first.
 - **Never run `erase-flash`.** Restore the verified image instead:
   `python tools/board_restore.py --backup <dir> --confirm RESTORE`.
@@ -18,7 +19,9 @@ Read this before changing firmware, tests, figures, or public claims.
   UART0 (43/44).
 - The pulse is **10 µs, 3.3 V**, into a jumper or the laptop's USB input.
   **Never to a body.** No electrodes, no current source.
-- Boot must stay **disarmed**; only the `arm` command may enable GPIO4.
+- Boot must stay **disarmed**; only the `arm` command may enable GPIO4. A host
+  `--arm` flag must re-disable it on **every** exit path, including exceptions,
+  and must never claim an armed run unless the board acknowledged `[ARM]`.
 - Any new peripheral or pin change requires a user check-in before flashing.
 
 ## 2. Truth and provenance

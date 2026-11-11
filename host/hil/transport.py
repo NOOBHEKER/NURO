@@ -24,11 +24,37 @@ from host.virtualbrain.kuramoto import KuramotoBrain, KuramotoConfig
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+def send_repl_command(
+    ser: serial.Serial,
+    command: str,
+    expect: bytes,
+    timeout_s: float = 2.0,
+) -> bool:
+    """Send a firmware REPL command on an open port and wait for its ack.
+
+    The board's REPL shares the UART with the binary HIL frames, so this is only
+    safe while no binary frames are in flight. Returns ``True`` when ``expect``
+    appears in the response before the timeout.
+    """
+    ser.reset_input_buffer()
+    ser.write(command.encode("ascii") + b"\r\n")
+    deadline = time.time() + timeout_s
+    buf = b""
+    while time.time() < deadline:
+        chunk = ser.read(4096)
+        if chunk:
+            buf += chunk
+            if expect in buf:
+                return True
+    return False
+
+
 def run_hil_benchmark(
     port: Optional[str] = None,
     baudrate: int = 2000000,
     n_frames: int = 1000,
     seed: int = 2026,
+    arm: bool = False,
     runs_root: Path = REPO_ROOT / "runs",
 ) -> Dict[str, Any]:
     """Run a hardware-in-the-loop closed-loop session against the ESP32-S3.
@@ -53,6 +79,17 @@ def run_hil_benchmark(
     time.sleep(0.35)
     ser.reset_input_buffer()
     ser.reset_output_buffer()
+
+    if arm:
+        # Opening the port resets the board, so the gate must be enabled on this
+        # connection, after the reset — never before it.
+        if not send_repl_command(ser, "arm", b"[ARM]"):
+            ser.close()
+            raise RuntimeError(
+                "the board did not acknowledge `arm`; refusing to run a "
+                "benchmark that claims to be armed"
+            )
+        print("[bench] stimulation gate: ARMED for this run")
 
     rtt_us_list: List[float] = []
     dsp_us_list: List[int] = []
@@ -115,6 +152,9 @@ def run_hil_benchmark(
             stim_pulses += 1
             pending_stim = 500.0
 
+    if arm:
+        if not send_repl_command(ser, "disarm", b"[DISARM]", timeout_s=1.5):
+            print("[bench] WARNING: disarm was not acknowledged; reset the board.")
     ser.close()
 
     rtt_arr = (
@@ -133,6 +173,7 @@ def run_hil_benchmark(
         "timestamp": datetime.now().isoformat(),
         "port": port,
         "baudrate": baudrate,
+        "armed": arm,
         "n_frames_sent": n_frames,
         "n_frames_valid": len(rtt_us_list),
         "dropped_frames": dropped,

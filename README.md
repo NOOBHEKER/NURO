@@ -85,7 +85,7 @@ Windows serial ports are exclusive, so the TUI and GUI deliberately run as **lab
 | `nuro gui` | Matplotlib cockpit |
 | `nuro info` | **Real** read-only board probe (chip, MAC, flash, PSRAM) |
 | `nuro doctor` | Environment, dependencies, PATH, drivers, board and repo readiness |
-| `nuro bench --frames 500` | Live HIL benchmark; writes `runs/<id>/metrics.json` |
+| `nuro bench --frames 500` | Live HIL benchmark; writes `runs/<id>/metrics.json`. Add `--arm` to enable GPIO4 for the run |
 | `nuro eval` | Gates G5/G6 on **synthetic surrogates** |
 | `nuro test` | Full pytest suite |
 | `nuro figures` | Regenerate publication figures (PNG + PDF) |
@@ -104,9 +104,16 @@ Port selection is centralised in `host/board.py`:
 ### Stimulation is opt-in
 
 The flashed firmware boots **disarmed**: GPIO4 stays low and `nuro bench` reports
-`stim_pulses_fired: 0` until someone types `arm` in the firmware REPL (`nuro term`).
-The host tools deliberately do not arm the board for you. A 5 s task watchdog, a
-boot self-test and a 20 ms artifact-blanking curtain are in the same build; see
+`stim_pulses_fired: 0` until the gate is enabled. Two ways to enable it for a run:
+
+```powershell
+nuro bench --frames 500 --arm   # armed on this connection, disarmed afterwards
+nuro demo --arm                 # armed for the demo, disarmed on exit
+```
+
+Opening the serial port resets the board, so the gate can never survive a
+reconnect — it always comes back disarmed. A 5 s task watchdog, a boot self-test
+and a 20 ms artifact-blanking curtain are in the same build; see
 [`docs/RECOVERY.md`](docs/RECOVERY.md) before flashing anything.
 
 ---

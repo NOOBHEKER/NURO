@@ -66,6 +66,7 @@ def run_demo(
     web_port: int = 8765,
     frames: Optional[int] = None,
     open_browser: bool = True,
+    arm: bool = False,
 ) -> None:
     from host.board import resolve_port
     from host.dash.web_cockpit import create_web_cockpit
@@ -78,11 +79,15 @@ def run_demo(
     print(f"  Web cockpit      : http://127.0.0.1:{web_port}")
     print("  TUI              : this terminal (in-silico mirror)")
     print("  Matplotlib GUI   : separate window (in-silico mirror)")
+    print(
+        "  Stimulation gate : "
+        + ("ARM for this session" if arm else "disarmed (default)")
+    )
     print("  Note             : serial ports are exclusive, so only the web")
     print("                     cockpit owns the board; the mirrors are labelled.")
     print("=" * 63)
 
-    engine, srv = create_web_cockpit(port=web_port, serial_port=port)
+    engine, srv = create_web_cockpit(port=web_port, serial_port=port, arm=arm)
     server_thread = threading.Thread(target=srv.serve_forever, daemon=True)
     server_thread.start()
     print(
@@ -117,5 +122,10 @@ def run_demo(
         except Exception:
             pass
         srv.server_close()
+        engine.disable_stim_gate()
+        engine.close()
         _stop(gui_proc)
-        print("\n[demo] All three views stopped. Board was never written to.")
+        if arm:
+            print("\n[demo] All three views stopped. Stimulation gate disarmed.")
+        else:
+            print("\n[demo] All three views stopped. Board was never written to.")

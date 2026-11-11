@@ -155,6 +155,11 @@ def main() -> None:
     p_demo.add_argument(
         "--no-browser", action="store_true", help="Don't auto-open the browser"
     )
+    p_demo.add_argument(
+        "--arm",
+        action="store_true",
+        help="Enable the GPIO4 stimulation gate while the demo runs (disarmed on exit)",
+    )
 
     # nuro web
     p_web = sub.add_parser(
@@ -187,6 +192,11 @@ def main() -> None:
     )
     p_bench.add_argument(
         "--port", default=None, help="Serial port (default: auto-detect)"
+    )
+    p_bench.add_argument(
+        "--arm",
+        action="store_true",
+        help="Enable the GPIO4 stimulation gate for this run (disarmed afterwards)",
     )
 
     # nuro eval
@@ -375,6 +385,7 @@ def main() -> None:
             web_port=getattr(args, "web_port", 8765),
             frames=getattr(args, "frames", None),
             open_browser=not getattr(args, "no_browser", False),
+            arm=bool(getattr(args, "arm", False)),
         )
 
     elif cmd == "web":
@@ -413,8 +424,13 @@ def main() -> None:
 
         port = resolve_port(getattr(args, "port", None))
         n_frames = getattr(args, "frames", 1000)
+        arm = bool(getattr(args, "arm", False))
         _announce_port(port)
-        res = run_hil_benchmark(port=port, n_frames=n_frames)
+        try:
+            res = run_hil_benchmark(port=port, n_frames=n_frames, arm=arm)
+        except RuntimeError as exc:
+            print(f"[nuro] {exc}", file=sys.stderr)
+            return 2
         import json
 
         print(json.dumps(res, indent=2))

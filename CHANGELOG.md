@@ -27,6 +27,9 @@ called.
 - **`docs/PLUG_AND_PLAY.md`**, **`docs/CLAIMS.md`**, **`AGENTS.md`**,
   **`LICENSE`** (MIT), **`.github/workflows/ci.yml`**.
 - Hermetic port-ranking tests in `tests/test_board_ports.py`.
+- **`--arm` on `nuro bench` and `nuro demo`** — enables the GPIO4 gate on the
+  same serial connection, refuses to run if the board does not acknowledge
+  `[ARM]`, and disarms on exit. Covered by hermetic REPL-handshake tests.
 
 ### Verified on hardware (2026-11-11)
 

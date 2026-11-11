@@ -844,6 +844,36 @@ class TuiCockpitEngine:
         except Exception:
             self.hw_live = False
 
+    def enable_stim_gate(self) -> bool:
+        """Arm GPIO4 on this connection.
+
+        Opening the serial port resets the board, so this must be called after
+        ``_connect_serial`` — never before.
+        """
+        if not self.hw_live or self.ser is None:
+            return False
+        from host.hil.transport import send_repl_command
+
+        return send_repl_command(self.ser, "arm", b"[ARM]")
+
+    def disable_stim_gate(self) -> bool:
+        if not self.hw_live or self.ser is None:
+            return False
+        from host.hil.transport import send_repl_command
+
+        return send_repl_command(self.ser, "disarm", b"[DISARM]", timeout_s=1.5)
+
+    def close(self) -> None:
+        """Release the serial port so another process can use the board."""
+        self.running = False
+        self.hw_live = False
+        ser, self.ser = self.ser, None
+        if ser is not None:
+            try:
+                ser.close()
+            except Exception:
+                pass
+
     def execute_command(self, raw_cmd: str) -> None:
         with self.lock:
             cmd = raw_cmd.replace("cli:", "").strip().lower()
@@ -1079,9 +1109,15 @@ def create_web_cockpit(
     host: str = "127.0.0.1",
     port: int = 8765,
     serial_port: Optional[str] = None,
+    arm: bool = False,
 ) -> tuple[TuiCockpitEngine, HTTPServer]:
     """Build the engine and HTTP server without blocking (used by `nuro demo`)."""
     engine = TuiCockpitEngine(port=serial_port)
+    if arm:
+        if engine.enable_stim_gate():
+            print("[cockpit] stimulation gate: ARMED for this session")
+        else:
+            print("[cockpit] stimulation gate: could not arm; staying disarmed")
 
     def bg_loop() -> None:
         while engine.running:
@@ -1133,13 +1169,18 @@ def run_web_cockpit(
     host: str = "127.0.0.1",
     port: int = 8765,
     serial_port: Optional[str] = None,
+    arm: bool = False,
 ) -> None:
-    engine, srv = create_web_cockpit(host=host, port=port, serial_port=serial_port)
+    engine, srv = create_web_cockpit(
+        host=host, port=port, serial_port=serial_port, arm=arm
+    )
     print(f"NEURAL LOOP TUI Workstation v2.0 running at: http://{host}:{port}")
     try:
         srv.serve_forever()
     finally:
+        engine.disable_stim_gate()
         engine.running = False
+        engine.close()
         srv.server_close()
 
 

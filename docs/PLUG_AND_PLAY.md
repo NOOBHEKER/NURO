@@ -162,7 +162,8 @@ python -m platformio run -d firmware -t upload --upload-port COM7
 | `Permission denied` on Linux | User not in `dialout` | `sudo usermod -aG dialout $USER`, then re-login. |
 | `esptool is not installed` | venv missing the dependency | `nuro setup` (or `pip install -e .`). |
 | `nuro info` says "NOT RESPONDING" | Board in a sketch that blocks the ROM loader, or held in reset | Hold **BOOT**, tap **RESET**, release **BOOT**, retry. |
-| `nuro bench` reports `stim_pulses_fired: 0` | The board boots **disarmed** | Expected. Arm it in the firmware REPL (`nuro term` → `arm`) if you actually want GPIO4 pulses. |
+| `nuro bench` reports `stim_pulses_fired: 0` | The board boots **disarmed** | Expected. Add `--arm` (`nuro bench --arm` / `nuro demo --arm`) to enable GPIO4 for that run; it is disarmed again at the end. |
+| Board reboots whenever a command starts | Opening the serial port resets the ESP32-S3 (DTR/RTS) | Expected. It is also why the stimulation gate always comes back disarmed after a reconnect. |
 
 ---
 
