@@ -213,7 +213,8 @@ The suite is **hermetic**:
 - Obsidian is never launched and the user's vault/session state is never touched;
 - PDF metadata is deterministic.
 
-Current result: **14 passed**.
+Current result: **25 passed** (14 in `test_suite.py`, 11 port-ranking tests in
+`test_board_ports.py`).
 
 ---
 
