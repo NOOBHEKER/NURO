@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = []
+datas = [('data/patient/chb_patient_dataset.npz', 'data/patient')]
 binaries = []
 hiddenimports = ['serial.tools.list_ports', 'serial.tools.list_ports_windows']
 tmp_ret = collect_all('host')

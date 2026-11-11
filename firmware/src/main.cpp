@@ -12,6 +12,7 @@
 #include "nl_snn.h"
 #include "nl_calc_embedded.h"
 #include "nl_lcd.h"
+#include "trained_snn_weights.h"
 
 /*
  * BOARD SAFETY GUARANTEES (Rule #4: Never destroy the board):
@@ -47,13 +48,8 @@ static int8_t g_w1[NL_SNN_HID][NL_SNN_IN];
 static int8_t g_w2[NL_SNN_HID];
 
 static void init_snn_weights(void) {
-    for (int j = 0; j < NL_SNN_HID; ++j) {
-        for (int i = 0; i < NL_SNN_IN; ++i) {
-            int val = ((i * 7 + j * 13) % 31) - 10;
-            g_w1[j][i] = (int8_t)val;
-        }
-        g_w2[j] = (j % 4 == 0) ? -12 : 18;
-    }
+    memcpy(g_w1, TRAINED_W1, sizeof(g_w1));
+    memcpy(g_w2, TRAINED_W2, sizeof(g_w2));
 }
 
 /* WS2812 RGB LED control helper (supporting Rev 1.0 on GPIO 48 and Rev 1.1 on GPIO 38) */
@@ -90,11 +86,11 @@ static void update_live_status_led(bool is_burst, bool triggered, uint16_t env, 
     uint8_t target_r = 0, target_g = 15, target_b = 0; // Default: calm resting Green
 
     if (triggered) {
-        // Red latch on burst trigger: hold for 250 ms so each pulse is a clean, solid indicator
-        g_red_led_until_ms = now + 250;
+        // Red latch on burst trigger: hold for 150 ms so each pulse is a clean, solid indicator
+        g_red_led_until_ms = now + 150;
         target_r = 30; target_g = 0; target_b = 0; // 🔴 Solid RED on stimulation pulse
     } else if (now < g_red_led_until_ms) {
-        target_r = 30; target_g = 0; target_b = 0; // 🔴 Solid RED during 250ms pulse marker
+        target_r = 30; target_g = 0; target_b = 0; // 🔴 Solid RED during 150ms pulse marker
     } else if (color_hint == 1) {
         // Explicit host green: R(t) < 0.35 in terminal -> ALWAYS GREEN
         target_r = 0; target_g = 15; target_b = 0;  // 🟢 GREEN
@@ -393,16 +389,32 @@ void loop() {
         g_last_dsp_out = dsp_out1;
         uint32_t t_dsp = (uint32_t)esp_timer_get_time();
 
-        /* Populate 16 int8 input features from normalized envelope & quadrature components */
-        int32_t norm_env = (g_dsp.env_mean_q15 > 64)
-            ? ((int32_t)dsp_out1.env_q15 * 32) / g_dsp.env_mean_q15
-            : 0;
-        if (norm_env > 127) norm_env = 127;
+        /* Populate 16 int8 input features matching clinical SNN training pipeline */
+        int16_t env = dsp_out1.env_q15;
+        g_in_feat[0] = (int8_t)(env > 1016 ? 127 : (env >> 3));
+        g_in_feat[1] = (int8_t)(env > 2032 ? 127 : (env >> 4));
+        g_in_feat[2] = (int8_t)(env > 4064 ? 127 : (env >> 5));
+        g_in_feat[3] = (int8_t)(env > 8128 ? 127 : (env >> 6));
+        g_in_feat[4] = 35; // Constant baseline reference threshold (inhibitory)
+        g_in_feat[5] = (int8_t)(((int32_t)env * 16) / 200 > 127 ? 127 : ((int32_t)env * 16) / 200);
 
-        for (int k = 0; k < 8; ++k) {
-            g_in_feat[k]     = (int8_t)((norm_env * (k + 4)) >> 4);
-            g_in_feat[k + 8] = (int8_t)(dsp_out1.I_q15 >> 8);
-        }
+        int16_t d_env = env - g_last_dsp_out.env_q15;
+        g_in_feat[6] = (int8_t)(d_env > 254 ? 127 : (d_env < -256 ? -128 : (d_env >> 1)));
+        g_in_feat[7] = (int8_t)(d_env > 508 ? 127 : (d_env < -512 ? -128 : (d_env >> 2)));
+
+        g_in_feat[8]  = (int8_t)(dsp_out1.I_q15 >> 7);
+        g_in_feat[9]  = (int8_t)(dsp_out1.Q_q15 >> 7);
+        g_in_feat[10] = (int8_t)(dsp_out1.I_q15 >> 8);
+        g_in_feat[11] = (int8_t)(dsp_out1.Q_q15 >> 8);
+
+        g_in_feat[12] = (int8_t)(dsp_out1.phase_q15 >> 8);
+        int32_t abs_raw_phase = dsp_out1.phase_q15 < 0 ? -dsp_out1.phase_q15 : dsp_out1.phase_q15;
+        g_in_feat[13] = (int8_t)(abs_raw_phase >> 8);
+
+        int32_t abs_i = dsp_out1.I_q15 < 0 ? -dsp_out1.I_q15 : dsp_out1.I_q15;
+        int32_t abs_q = dsp_out1.Q_q15 < 0 ? -dsp_out1.Q_q15 : dsp_out1.Q_q15;
+        g_in_feat[14] = (int8_t)(abs_i > 16256 ? 127 : (abs_i >> 7));
+        g_in_feat[15] = (int8_t)(abs_q > 16256 ? 127 : (abs_q >> 7));
 
         /* Execute 64-neuron int8 LIF SNN over 8 sub-steps */
         uint8_t spike_count = nl_snn_step_block(&g_snn, g_in_feat, g_w1, g_w2, dsp_out1.blanked);
@@ -422,10 +434,10 @@ void loop() {
         bool is_burst = false;
         if (color_hint == 3) {
             is_burst = (!dsp_out1.blanked);
-        } else if (color_hint == 1 || color_hint == 2) {
+        } else if (color_hint == 1) {
             is_burst = false;
         } else {
-            // Standalone mode: derive from SNN spikes & envelope
+            // Standalone mode or early warning: derive from on-chip trained SNN spikes & envelope surge
             is_burst = (!dsp_out1.blanked) && (spike_count >= 4 || dsp_out1.env_q15 >= 600);
         }
         int32_t abs_phase = (comp_phase_q15 < 0) ? -(int32_t)comp_phase_q15 : (int32_t)comp_phase_q15;

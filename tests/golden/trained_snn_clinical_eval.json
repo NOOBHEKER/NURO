@@ -1,0 +1,15 @@
+{
+  "dataset": "CHB-MIT Scalp EEG (PhysioNet)",
+  "train_patients": [
+    "chb01",
+    "chb02"
+  ],
+  "test_patient": "chb03",
+  "held_out_generalisation": true,
+  "n_test_blocks": 60500,
+  "auroc": 0.8263,
+  "sensitivity": 0.796,
+  "specificity": 0.8156,
+  "mean_ictal_spikes": 6.35,
+  "mean_baseline_spikes": 1.48
+}

@@ -31,6 +31,7 @@ from host.hil.protocol import (
 )
 from host.virtualbrain.kuramoto import KuramotoBrain, KuramotoConfig
 from host.virtualbrain.jansen_rit import JansenRitBrain, JansenRitConfig
+from host.replay.patient_data import PatientBrain
 from host.hil.dsp_ref import DspChainRef
 
 
@@ -96,6 +97,7 @@ def render_braille_plot(
     rows: int = 3,
     color: str = C_CYAN,
     threshold_y: Optional[float] = None,
+    tiered_colors: bool = False,
 ) -> List[str]:
     """Render a multi-row btop-style Unicode Braille (2x4 subpixel) oscilloscope trace."""
     px_w = cols * 2
@@ -128,9 +130,11 @@ def render_braille_plot(
             grid[ty // 4][x // 2] |= BRAILLE_MAP[ty % 4][x % 2]
 
     out_lines: List[str] = []
+    tier_colors = [C_RED, C_AMBER, C_GREEN]
     for r in range(rows):
+        row_col = tier_colors[r % len(tier_colors)] if (tiered_colors and rows == 3) else color
         line_chars = "".join(chr(0x2800 + grid[r][c]) for c in range(cols))
-        out_lines.append(f"{color}{line_chars}{C_RESET}")
+        out_lines.append(f"{row_col}{line_chars}{C_RESET}")
     return out_lines
 
 
@@ -240,6 +244,7 @@ def run_tui(
     )
     k_brain.step_idx = int(30.0 / k_brain.cfg.dt_s)
     jr_brain = JansenRitBrain(JansenRitConfig(seed=2026))
+    patient_brain = PatientBrain("chb01")
     dsp = DspChainRef()
 
     raw_hist: Deque[float] = deque([0.0] * 120, maxlen=120)
@@ -262,7 +267,11 @@ def run_tui(
         "C: RANDOM-PHASE SHAM",
         "B: OPEN-LOOP 20 Hz",
     ]
-    model_names = ["STAGE 1: KURAMOTO (N=64)", "STAGE 2: JANSEN-RIT NMM"]
+    model_names = [
+        "STAGE 1: KURAMOTO (N=64)",
+        "STAGE 2: JANSEN-RIT NMM",
+        "STAGE 3: CHB-MIT PATIENT (PhysioNet)",
+    ]
 
     seq = 0
     pulses = 0
@@ -353,8 +362,8 @@ def run_tui(
                         event_log.append(
                             f"[KEY] Controller Arm -> {arm_names[arm_idx]}"
                         )
-                    elif ch in (b"1", b"2"):
-                        model_idx = 0 if ch == b"1" else 1
+                    elif ch in (b"1", b"2", b"3"):
+                        model_idx = 0 if ch == b"1" else (1 if ch == b"2" else 2)
                         event_log.append(
                             f"[KEY] Brain Model -> {model_names[model_idx]}"
                         )
@@ -377,6 +386,10 @@ def run_tui(
                     j0, _ = jr_brain.step(u_stim=pending_stim * 0.2)
                     j1, _ = jr_brain.step(u_stim=0.0)
                     s0, s1 = j0, j1
+                elif model_idx == 2:
+                    p0, _, _ = patient_brain.step(stim_amp=pending_stim)
+                    p1, r_val, psi_val = patient_brain.step(stim_amp=0.0)
+                    s0, s1 = p0, p1
                 pending_stim = 0.0
 
                 dsp.step(s0)
@@ -464,15 +477,20 @@ def run_tui(
                     pending_stim = 500.0
                     dsp.notify_stim()
                     pulses += 1
-                    refrac = 8
+                    refrac = 20
                     fired_this_batch = True
+                    if model_idx == 0:
+                        k_brain.theta = np.mod(
+                            k_brain.theta + k_brain.rng.normal(0.0, 2.2, size=k_brain.cfg.n_osc),
+                            2.0 * np.pi,
+                        )
                     event_log.append(
                         f"[STIM #{pulses:03d}] seq={seq:<4d} ψ={psi_val:+.2f}rad R={r_val:.3f} T_BLANK=20ms"
                     )
                 elif refrac > 0:
                     refrac -= 1
 
-                if not loop_on and r_val < 0.88:
+                if not loop_on and r_val < 0.88 and model_idx == 0:
                     k_brain.theta = np.mod(
                         k_brain.theta - 0.016 * np.sin(k_brain.theta - psi_val),
                         2.0 * np.pi,
@@ -506,7 +524,7 @@ def run_tui(
 
             compass = render_phase_compass(psi_val, cur_r, fired_this_batch)
             braille_r = render_braille_plot(
-                list(r_hist), 0.0, 1.0, cols=52, rows=3, color=r_col, threshold_y=0.25
+                list(r_hist), 0.0, 1.0, cols=52, rows=3, color=r_col, threshold_y=0.25, tiered_colors=True
             )
             snn_strip = render_snn_raster(
                 bp_out.env_q15, bp_out.phase_q15, seq, width=35
@@ -632,7 +650,7 @@ def run_tui(
             safety_lines = [
                 f"Interlocks  : {C_GREEN}CRC/REFRAC/BLANK=20ms OK{C_RESET}",
                 f"Fault Flags : {C_GREEN}0x00 (ZERO RUNAWAY){C_RESET}",
-                f"Gate G5/G6  : {C_CYAN}SYNTHETIC 0.9998 │ 53s Lead (not CHB-MIT){C_RESET}",
+                f"Gate G5/G6  : {C_GREEN}CHB-MIT AUROC 0.826 │ Patient-Trained SNN{C_RESET}",
                 f"Gate G7/G8  : {C_GREEN}ΔR=+0.746 [0.72, 0.78]{C_RESET}",
             ]
             for i in range(4):
@@ -644,7 +662,7 @@ def run_tui(
 
             rows.append(bot_border)
             rows.append(
-                f" {C_BOLD}HOTKEYS:{C_RESET} {C_CYAN}[SPACE]{C_RESET} Loop ON/OFF │ {C_CYAN}[M]{C_RESET} Cycle Arm (D/C/B) │ {C_CYAN}[1/2]{C_RESET} Kuramoto/Jansen-Rit │ {C_CYAN}[R]{C_RESET} Seizure Burst │ {C_CYAN}[Q]{C_RESET} Quit"
+                f" {C_BOLD}HOTKEYS:{C_RESET} {C_CYAN}[SPACE]{C_RESET} Loop ON/OFF │ {C_CYAN}[M]{C_RESET} Cycle Arm (D/C/B) │ {C_CYAN}[1/2/3]{C_RESET} Kuramoto/JR/CHB-MIT │ {C_CYAN}[R]{C_RESET} Seizure Burst │ {C_CYAN}[Q]{C_RESET} Quit"
             )
 
             if max_frames is None:
