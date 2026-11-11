@@ -100,7 +100,13 @@ def run_setup(
         print(f"  Reusing existing virtual environment: {VENV_DIR}")
     else:
         print(f"  Creating virtual environment: {VENV_DIR}")
-        _run([sys.executable, "-m", "venv", str(VENV_DIR)])
+        try:
+            _run([sys.executable, "-m", "venv", str(VENV_DIR)])
+        except SystemExit:
+            raise SystemExit(
+                "[setup] could not create .venv. On Debian/Ubuntu install the venv "
+                "module first:  sudo apt install python3-venv  then re-run."
+            )
 
     if not python.exists():
         raise SystemExit(

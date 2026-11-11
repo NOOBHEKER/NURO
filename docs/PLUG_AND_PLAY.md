@@ -40,7 +40,8 @@ chmod +x setup.sh
 
 `setup` checks for Python 3.10+, creates `.venv`, installs the project in
 editable mode, and runs `nuro doctor`. It never opens the serial port and never
-touches the board.
+touches the board. The first run downloads the dependencies (numpy, matplotlib,
+pyserial, sympy, esptool, pytest, PlatformIO), so it needs internet once.
 
 ## 3. Put `nuro` on PATH (once per computer)
 
