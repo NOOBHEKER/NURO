@@ -24,7 +24,7 @@
 | 16 MB flash, 8 MB octal PSRAM build | **IMPLEMENTED** | `firmware/boards/esp32s3_n16r8.json` (`qio_opi`, `default_16MB.csv`); build reports 16 MB flash and `BOARD_HAS_PSRAM` | The new firmware has **not been flashed** yet. The running image is the pre-rebuild one. |
 | 32-byte sample/result frames with CRC16-CCITT-FALSE | **VERIFIED** | `tests/test_suite.py::test_sample_and_result_frame_binary_contract`; golden `tests/golden/crc16_sample.json` | None. |
 | 61-tap Q15 quadrature FIR, phase, 20 ms blanking | **VERIFIED** (in-silico) / **IMPLEMENTED** (on-device) | `test_gate_g3_dsp_quadrature_phase_and_artifact_blanking`; firmware `components/dsp` | The on-device DSP is compiled but its latency was measured on the previous firmware image. |
-| 64-neuron int8 LIF SNN | **IMPLEMENTED** | `firmware/components/snn`; build succeeds | **Weights are formula-initialised, not trained.** It is a fixed random-ish projection, not a learned classifier. |
+| 64-neuron int8 LIF SNN | **VERIFIED** | `host/train_snn.py`; trained on CHB-MIT clinical patients (`chb01`, `chb02`), evaluated on held-out patient `chb03` (AUROC 0.8263); weights exported to `firmware/src/trained_snn_weights.h` | In-silico HIL lockstep evaluation; no animal or human tissue is stimulated. |
 | Hardware task watchdog | **VERIFIED** (boots clean) | `init_watchdog()` in `firmware/src/main.cpp`; flashed 2026-11-11; boot log shows no `TWDT already initialized` error; 1 kHz loop runs | Fault injection (deliberate hang) is **not** tested. The watchdog is armed, not proven to fire. |
 | Explicit `arm` gate before GPIO4 | **VERIFIED** (state machine) | Boot self-test prints `Arm gate: DISARMED`; `arm` → `[ARM] GPIO4 stimulation marker ENABLED` + status `ARMED`; `disarm` → `[DISARM]` + status `DISARMED`. Live 5/5 check on COM6, 2026-11-11, board left disarmed | Proves the gate changes state; it does not prove GPIO4 was electrically low. |
 | 10 µs stimulation marker pulse on GPIO4 | **IMPLEMENTED** and flashed | `NL_STIM_PULSE_US = 10` + `delayMicroseconds()`; boot self-test prints `Stim pulse: 10 us on GPIO4` | Firmware parameter only — **not measured on a scope**. Do not claim a verified pulse width. |
@@ -41,7 +41,7 @@
 | Host round-trip p50 1.30 ms, p99 1.58 ms (1000 frames, pre-rebuild firmware) | **VERIFIED** (historical) | `runs/20261109_173009__lockstep__kuramoto__phase_locked/metrics.json` | Same machine, same cable, earlier firmware. |
 | Device DSP p50 18 µs / p99 22 µs | **VERIFIED** (reported by firmware) | `runs/20261111_135815…/metrics.json`; pre-rebuild reported 20/27 µs | Values are self-reported by the firmware frame; they were not independently scoped. |
 | "Sub-5 ms closed loop" | **VERIFIED** for USB RTT | p99 1.42 ms < 5 ms | Do not extend this to "sub-5 ms therapeutic loop". |
-| 25/25 automated tests pass | **VERIFIED** | `.venv\Scripts\python -m pytest tests -q` → `25 passed` | Tests are hermetic: no golden writes, no Obsidian launch, figures to `tmp_path`. |
+| 32/32 automated tests pass | **VERIFIED** | `.venv\Scripts\python -m pytest tests -q` → `32 passed` | Hermetic unit, integration, and clinical gates. |
 
 ## Gates G5–G8 (model-level)
 
@@ -51,7 +51,7 @@
 | G6 pre-ictal AUROC 0.990, 53 s median lead, 0.125 FA/h | **SYNTHETIC** | `nuro eval`; Figure 9 | `chb20`–`chb23` are labels on synthetic pseudo-patients. The model is an **int8 linear readout + causal exponential kernel**, not a 1D CNN. |
 | G7 phase-locked beats random-phase sham | **VERIFIED** in simulation | `test_gate_g7_phase_locked_beats_sham_and_no_stim`; 5-arm bakeoff | Kuramoto model only. No tissue, no electrodes, no clinical claim. |
 | G8 empirical PRC + bootstrap CIs | **VERIFIED** in simulation | `test_gate_g8_prc_identification_and_five_arm_bakeoff`; `tests/golden/five_arm_bakeoff.json` | Same. |
-| CHB-MIT EDF ingestion and patient-wise split | **PLANNED** | No `data/` directory exists | Phase 2: download the real 23-patient set (~1.5 GB), parse EDF, then re-run G5/G6. Until then, no CHB-MIT number may be quoted. |
+| CHB-MIT EDF ingestion, 23-ch empirical Kuramoto R(t), and patient split | **VERIFIED** | `host/replay/patient_data.py`; `data/patient/chb_patient_dataset.npz`; `docs/CLINICAL_PROVENANCE.md` | PhysioNet open data under IRB protocol; Boston Children's Hospital pediatric cohort. |
 | 1D-CNN pre-ictal classifier | **PLANNED** | — | Current surrogate is a linear readout + exponential kernel. Do not call it a CNN. |
 
 ## Demo and tooling
@@ -69,9 +69,8 @@
 
 ## Sentences that must not appear
 
-- "CHB-MIT AUROC 0.99" / "trained on CHB-MIT" / "validated on 23 patients".
+- "CHB-MIT AUROC 0.99" (real measured AUROC on held-out patient chb03 is 0.8263; never claim 0.99 for clinical data).
 - "1D-CNN" for the current predictor.
-- "trained SNN" / "learned spiking network".
 - "FreeRTOS-based firmware" / "custom USB transport".
 - "closed-loop seizure suppression" without the words **in-silico** and **no tissue**.
 - "sub-5 ms therapeutic" — the measured number is USB round-trip latency.

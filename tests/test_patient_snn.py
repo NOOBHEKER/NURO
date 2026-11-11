@@ -22,22 +22,28 @@ def test_clinical_patient_dataset_structure() -> None:
     for pat in ["chb01", "chb02", "chb03"]:
         assert f"{pat}_sz_sig" in data
         assert f"{pat}_sz_labels" in data
+        assert f"{pat}_sz_R" in data
+        assert f"{pat}_sz_psi" in data
         assert f"{pat}_base_sig" in data
+        assert f"{pat}_base_R" in data
+        assert f"{pat}_base_psi" in data
         sig = data[f"{pat}_sz_sig"]
         labels = data[f"{pat}_sz_labels"]
-        assert len(sig) == len(labels)
+        r_emp = data[f"{pat}_sz_R"]
+        assert len(sig) == len(labels) == len(r_emp)
         assert np.sum(labels == 1) > 0, f"Patient {pat} must have annotated seizure samples"
         assert np.sum(labels == 0) > 0, f"Patient {pat} must have baseline samples"
+        assert 0.0 <= np.min(r_emp) <= np.max(r_emp) <= 1.0
 
 
 def test_patient_brain_closed_loop_suppression() -> None:
     """Verify that PatientBrain steps properly and suppresses seizure amplitude upon stimulation."""
     brain = PatientBrain("chb01", start_at_onset=False)
-    # Advance to seizure window
-    for _ in range(brain.sz_start_idx + 100):
+    # Advance to established seizure discharge (0.5s into ictal event)
+    for _ in range(brain.sz_start_idx + 1000):
         brain.step(stim_amp=0.0)
 
-    # Observe unsuppressed seizure amplitude
+    # Observe unsuppressed seizure amplitude and empirical synchrony
     raw_unstim, r_unstim, _ = brain.step(stim_amp=0.0)
     assert r_unstim > 0.50, f"Expected seizure order parameter > 0.50, got {r_unstim}"
 
@@ -46,7 +52,7 @@ def test_patient_brain_closed_loop_suppression() -> None:
         raw_stim, r_stim, _ = brain.step(stim_amp=500.0)
 
     # Suppression factor must reduce seizure synchrony R
-    assert r_stim < r_unstim, "Stimulation must reduce synchrony R(t)"
+    assert r_stim < r_unstim, f"Stimulation must reduce synchrony R(t): stim={r_stim}, unstim={r_unstim}"
     assert brain.suppression_factor < 1.0
 
 

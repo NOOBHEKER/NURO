@@ -561,7 +561,7 @@ def run_tui(
             p50_wcet = float(np.percentile(wcet_win, 50))
 
             hero_title = (
-                f"{C_BOLD}[3] HERO — Real-Time Patient Synchrony R(t){C_RESET}"
+                f"{C_BOLD}[3] HERO — Real-Time 23-Ch Scalp Synchrony R(t){C_RESET}"
                 if model_idx == 0
                 else f"{C_BOLD}[3] HERO — Kuramoto Synchrony R(t){C_RESET}"
             )
@@ -592,7 +592,7 @@ def run_tui(
                     )
                 )
                 pat_name = (
-                    patient_ids[pat_idx].upper()
+                    patient_brain.get_patient_profile()[:22]
                     if model_idx == 0
                     else ("KURAMOTO" if model_idx == 1 else "JANSEN")
                 )
@@ -678,7 +678,9 @@ def run_tui(
                         c_w_r,
                     ),
                     make_row(
-                        f"Raw LFP : {sparkline(list(raw_hist), -3.8, 3.8, 34, C_GRAY)}",
+                        f"EEG µV  : {sparkline(list(raw_hist), -3.8, 3.8, 22, C_GRAY)} {patient_brain.current_uV:+5.0f}µV"
+                        if model_idx == 0
+                        else f"Raw LFP : {sparkline(list(raw_hist), -3.8, 3.8, 34, C_GRAY)}",
                         compass_c[0],
                         c_w_l,
                         c_w_r,
@@ -781,7 +783,7 @@ def run_tui(
                     top_border,
                     make_row(
                         f"{C_BOLD}LINK:{C_RESET} {hw_str}  {loop_str}",
-                        f"{C_BOLD}MODEL:{C_RESET} {C_CYAN}{model_names[model_idx]}{C_RESET}",
+                        f"{C_BOLD}MODEL:{C_RESET} {C_CYAN}{patient_brain.get_patient_profile() if model_idx == 0 else model_names[model_idx]}{C_RESET}",
                         w_l,
                         w_r,
                     ),
@@ -793,13 +795,17 @@ def run_tui(
                     ),
                     mid_border,
                     make_row(
-                        f"{C_BOLD}[1] SIGNAL CHAIN — Raw LFP & 20ms Blanked Q15 Bandpass{C_RESET}",
+                        f"{C_BOLD}[1] CHB-MIT CLINICAL SCALP EEG & 20ms BLANKED Q15 BANDPASS{C_RESET}"
+                        if model_idx == 0
+                        else f"{C_BOLD}[1] SIGNAL CHAIN — Raw LFP & 20ms Blanked Q15 Bandpass{C_RESET}",
                         f"{C_BOLD}[2] 12-SECTOR PRC PHASE COMPASS{C_RESET}",
                         w_l,
                         w_r,
                     ),
                     make_row(
-                        f"Raw LFP : {sparkline(list(raw_hist), -3.8, 3.8, 50, C_GRAY)}",
+                        f"EEG µV  : {sparkline(list(raw_hist), -3.8, 3.8, 36, C_GRAY)} {patient_brain.current_uV:+6.1f} µV [{patient_brain.info['channel_name']} Focus]"
+                        if model_idx == 0
+                        else f"Raw LFP : {sparkline(list(raw_hist), -3.8, 3.8, 50, C_GRAY)}",
                         compass[0],
                         w_l,
                         w_r,
