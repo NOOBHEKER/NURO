@@ -61,6 +61,22 @@ All host entry points resolve serial ports through `host/board.py`:
 Do not add new hardcoded `"COM6"` defaults. Add a `--port` argument with
 `default=None` and call `resolve_port()`.
 
+The Windows fallback is the only place `COM6` may appear in code. On Linux and
+macOS the fallback is an empty port so the caller can show the in-silico view
+instead of guessing `/dev/tty*`.
+
+## 4b. Plug and play
+
+The repository must work on a fresh computer with no edits:
+
+- `setup.cmd` / `setup.ps1` / `setup.sh` create `.venv` and install the project;
+- `pyproject.toml` owns the `nuro` console entry point and the dependency list;
+- nothing outside `host/obsidian_sync.py` may assume a drive letter such as
+  `G:\`; that module uses `NURO_OBSIDIAN_ROOT` with a home-directory fallback;
+- `firmware/platformio.ini` must not pin `upload_port` or `monitor_port`;
+- `nuro doctor` must explain a missing driver, a missing PATH entry and a
+  missing board in one line each.
+
 ## 5. Firmware build
 
 - The real module is **N16R8** (16 MB flash, 8 MB octal PSRAM). Use

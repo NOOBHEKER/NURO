@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "neural-loop"
+version = "0.3.0"
+description = "Closed-loop edge neuromodulation testbed on ESP32-S3, plus a scientific calculator shell"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Neural Loop contributors" }]
+keywords = ["esp32-s3", "neuromodulation", "closed-loop", "hil", "kuramoto"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = [
+    "numpy>=1.26",
+    "matplotlib>=3.8",
+    "pyserial>=3.5",
+    "sympy>=1.12",
+    "requests>=2.31",
+    "esptool>=5.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "platformio>=6.1"]
+
+[project.scripts]
+nuro = "host.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["host*"]
+
+[tool.setuptools]
+zip-safe = false

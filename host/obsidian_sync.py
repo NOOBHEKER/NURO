@@ -11,6 +11,7 @@ Capabilities:
 3. Interactive Graph View Launch:
    - Directly opens the targeted vault via 'obsidian://open?vault=...'
 """
+
 from __future__ import annotations
 
 import datetime
@@ -23,9 +24,29 @@ import webbrowser
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 
-OBSIDIAN_ROOT = Path("G:/obsidian")
+OBSIDIAN_ROOT = Path(
+    os.environ.get("NURO_OBSIDIAN_ROOT")
+    or os.environ.get("OBSIDIAN_ROOT")
+    or ("G:/obsidian" if Path("G:/obsidian").exists() else Path.home() / "obsidian")
+)
 DEFAULT_VAULT_NAME = "Neural Loop Calculations"
-OBSIDIAN_EXE = Path("G:/obsidian/Obsidian.com")
+
+
+def _resolve_obsidian_exe(root: Path) -> Path:
+    env = os.environ.get("NURO_OBSIDIAN_EXE")
+    if env:
+        return Path(env).expanduser()
+    for candidate in (root / "Obsidian.com", root / "Obsidian.exe"):
+        if candidate.exists():
+            return candidate
+    if os.name == "nt":
+        local = os.environ.get("LOCALAPPDATA")
+        if local:
+            return Path(local) / "Obsidian" / "Obsidian.exe"
+    return root / "__obsidian_not_installed__"
+
+
+OBSIDIAN_EXE = _resolve_obsidian_exe(OBSIDIAN_ROOT)
 
 C_RESET = "\033[0m"
 C_BOLD = "\033[1m"
@@ -56,13 +77,13 @@ def extract_obsidian_directive(query: str) -> Tuple[str, Optional[str]]:
             vault_name = m.group(1).strip()
             # Clean off trailing quotation marks if any
             vault_name = vault_name.strip("\"'")
-            cleaned_query = query[:m.start()].strip()
+            cleaned_query = query[: m.start()].strip()
             return cleaned_query, vault_name
 
     # Check for simple bare 'to obsidian' without vault name
     m_bare = re.search(r"(?:save\s+)?to\s+obsidian\s*$", query, flags=re.I)
     if m_bare:
-        cleaned_query = query[:m_bare.start()].strip()
+        cleaned_query = query[: m_bare.start()].strip()
         return cleaned_query, DEFAULT_VAULT_NAME
 
     return query, None
@@ -101,14 +122,26 @@ def ensure_vault_initialized(vault_path: Path) -> None:
     core_plugins_path = obsidian_dir / "core-plugins.json"
     if not core_plugins_path.exists():
         core_plugins_path.write_text(
-            json.dumps(["graph", "backlink", "outgoing-link", "tag-pane", "search", "markdown-importer"], indent=2),
+            json.dumps(
+                [
+                    "graph",
+                    "backlink",
+                    "outgoing-link",
+                    "tag-pane",
+                    "search",
+                    "markdown-importer",
+                ],
+                indent=2,
+            ),
             encoding="utf-8",
         )
 
     app_json = obsidian_dir / "app.json"
     if not app_json.exists():
         app_json.write_text(
-            json.dumps({"showLineNumber": True, "useTab": True, "tabSize": 2}, indent=2),
+            json.dumps(
+                {"showLineNumber": True, "useTab": True, "tabSize": 2}, indent=2
+            ),
             encoding="utf-8",
         )
 
@@ -123,11 +156,20 @@ def ensure_vault_initialized(vault_path: Path) -> None:
             "showOrphans": True,
             "collapse-color-groups": False,
             "colorGroups": [
-                {"query": "path:\"Session\"", "color": {"a": 1, "rgb": 16498468}},        # Gold
-                {"query": "path:\"Math\"", "color": {"a": 1, "rgb": 3900150}},            # Cyan
-                {"query": "path:\"Chemistry\"", "color": {"a": 1, "rgb": 1096065}},       # Emerald
-                {"query": "path:\"Physics\"", "color": {"a": 1, "rgb": 16096779}},        # Amber
-                {"query": "path:\"Theories\"", "color": {"a": 1, "rgb": 11032311}},       # Purple
+                {"query": 'path:"Session"', "color": {"a": 1, "rgb": 16498468}},  # Gold
+                {"query": 'path:"Math"', "color": {"a": 1, "rgb": 3900150}},  # Cyan
+                {
+                    "query": 'path:"Chemistry"',
+                    "color": {"a": 1, "rgb": 1096065},
+                },  # Emerald
+                {
+                    "query": 'path:"Physics"',
+                    "color": {"a": 1, "rgb": 16096779},
+                },  # Amber
+                {
+                    "query": 'path:"Theories"',
+                    "color": {"a": 1, "rgb": 11032311},
+                },  # Purple
             ],
             "nodeSizeMultiplier": 1.4,
             "lineSizeMultiplier": 1.3,
@@ -140,7 +182,9 @@ def ensure_vault_initialized(vault_path: Path) -> None:
 
 def sanitize_filename(name: str) -> str:
     """Sanitize strings for Windows filenames."""
-    clean = "".join(c if c.isalnum() or c in (" ", "-", "_", "+", "^") else "_" for c in name)
+    clean = "".join(
+        c if c.isalnum() or c in (" ", "-", "_", "+", "^") else "_" for c in name
+    )
     return clean.strip()[:60]
 
 
@@ -193,15 +237,15 @@ domain: "{domain.capitalize()}"
 session: "{active_session}"
 vault: "{actual_vault_name}"
 timestamp: "{timestamp}"
-tags: [{', '.join(f'"{t}"' for t in tags)}]
+tags: [{", ".join(f'"{t}"' for t in tags)}]
 query: "{query.replace('"', "'")}"
 ---
 
 # {title}
 
 > **Vault:** `{actual_vault_name}` | **Session:** [[Session - {active_session}]] | **Logged:** `{timestamp}`
-> **Connected Nodes:** {' '.join(wikilinks)}
-> **Tags:** {' '.join(f'#{t}' for t in tags)}
+> **Connected Nodes:** {" ".join(wikilinks)}
+> **Tags:** {" ".join(f"#{t}" for t in tags)}
 
 ## ⚡ Query
 ```text
@@ -251,7 +295,9 @@ total_calculations: {len(notes)}
 ---
 *Press `Ctrl + G` in Obsidian to see this session's interconnected visual graph!*
 """
-    (vault_path / f"Session - {sanitize_filename(session_name)}.md").write_text(content, encoding="utf-8")
+    (vault_path / f"Session - {sanitize_filename(session_name)}.md").write_text(
+        content, encoding="utf-8"
+    )
 
 
 def launch_obsidian_vault(vault_name: Optional[str] = None) -> str:

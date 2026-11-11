@@ -91,11 +91,54 @@ def _check_repo() -> List[Tuple[str, str, str]]:
     return checks
 
 
+def _check_tooling() -> List[Tuple[str, str, str]]:
+    checks: List[Tuple[str, str, str]] = []
+    import os
+
+    repo_venv = REPO_ROOT / (
+        ".venv/Scripts/python.exe" if os.name == "nt" else ".venv/bin/python"
+    )
+    checks.append(
+        (
+            PASS if repo_venv.exists() else WARN,
+            "Repository virtual environment",
+            str(repo_venv) if repo_venv.exists() else "missing (run: nuro setup)",
+        )
+    )
+    in_venv = sys.prefix != getattr(sys, "base_prefix", sys.prefix)
+    checks.append(
+        (
+            PASS if in_venv else WARN,
+            "Running inside a virtual environment",
+            sys.prefix if in_venv else "system Python (run: nuro setup)",
+        )
+    )
+    console = shutil.which("nuro")
+    checks.append(
+        (
+            PASS if console else WARN,
+            "nuro on PATH",
+            console if console else "not installed (pip install -e . or use nuro.cmd)",
+        )
+    )
+    try:
+        import platformio  # noqa: F401
+
+        checks.append((PASS, "PlatformIO (firmware builds)", "installed"))
+    except Exception:
+        checks.append(
+            (WARN, "PlatformIO (firmware builds)", "missing (pip install platformio)")
+        )
+    return checks
+
+
 def _check_board(port: Optional[str], probe: bool) -> List[Tuple[str, str, str]]:
     from host.board import (
         describe_ports,
         detect_board_port,
+        driver_hint,
         esptool_available,
+        is_native_usb,
         probe_identity,
         resolve_port,
     )
@@ -109,6 +152,9 @@ def _check_board(port: Optional[str], probe: bool) -> List[Tuple[str, str, str]]
             ", ".join(p["device"] for p in ports) if ports else "none",
         )
     )
+    hint = "" if detect_board_port() else driver_hint()
+    if hint:
+        checks.append((WARN, "Board visibility", hint))
 
     detected = detect_board_port()
     resolved = resolve_port(port)
@@ -134,6 +180,16 @@ def _check_board(port: Optional[str], probe: bool) -> List[Tuple[str, str, str]]
             else "missing (pip install esptool>=5.0)",
         )
     )
+
+    if is_native_usb(resolved):
+        checks.append(
+            (
+                WARN,
+                "Board port type",
+                f"{resolved} is the native USB port; the HIL protocol runs on the "
+                "UART port (CH343). Use the UART USB-C port for nuro tui/bench.",
+            )
+        )
 
     if probe:
         facts = probe_identity(port)
@@ -193,6 +249,7 @@ def run_doctor(port: Optional[str] = None, probe: bool = True) -> int:
         )
     )
     checks.extend(_check_imports())
+    checks.extend(_check_tooling())
     checks.extend(_check_repo())
     checks.extend(_check_board(port, probe))
     checks.extend(_check_git())

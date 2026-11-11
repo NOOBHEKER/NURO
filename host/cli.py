@@ -2,9 +2,11 @@
 
 Usage:
   nuro                  # Launch the interactive scientific calculator shell
+  nuro setup            # One-command environment bootstrap (fresh computer)
   nuro tui              # Launch interactive Native Terminal TUI
   nuro web              # Launch 60 FPS Localhost TUI Workstation & open browser
   nuro gui              # Launch live matplotlib cockpit
+  nuro demo             # Web cockpit + TUI + matplotlib GUI in one command
   nuro bench            # Run 1000-frame live HIL benchmark (auto-detected port)
   nuro eval             # Run Gates G5 & G6 on SYNTHETIC surrogates (not CHB-MIT)
   nuro test             # Run the automated verification suite
@@ -13,7 +15,7 @@ Usage:
   nuro doctor           # Check the local environment and board readiness
 
 Port selection is centralised in host.board: --port > NURO_PORT > detected
-CH343/ESP32-S3 port > COM6 fallback.
+ESP32-S3/USB bridge > COM6 on Windows (no default elsewhere).
 """
 
 from __future__ import annotations
@@ -21,6 +23,26 @@ from __future__ import annotations
 import argparse
 import sys
 import webbrowser
+from typing import List
+
+
+def _version() -> str:
+    try:
+        from importlib.metadata import version as _pkg_version
+
+        return _pkg_version("neural-loop")
+    except Exception:
+        return "0.3.0"
+
+
+def _announce_port(port: str) -> None:
+    """Print the resolved port, flagging the native USB port when it is chosen."""
+    from host.board import is_native_usb
+
+    note = ""
+    if is_native_usb(port):
+        note = "  (native USB — the HIL protocol needs the UART port)"
+    print(f"[nuro] serial port: {port}{note}")
 
 
 def handle_session_command(args: List[str]) -> str:
@@ -81,10 +103,29 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         prog="nuro",
         description="⚡ nuro — Unified CLI for Neural Loop ($0 ESP32-S3 Closed-Loop Testbed)",
-        epilog="Examples:\n  nuro          (launches native terminal TUI)\n  nuro web      (launches 60 FPS localhost workstation)\n  nuro bench    (runs COM6 1000-frame benchmark)",
+        epilog="Examples:\n  nuro setup    (bootstrap this computer once)\n  nuro demo     (web cockpit + TUI + GUI)\n  nuro info     (read-only board probe)\n  nuro bench    (1000-frame live benchmark on the auto-detected port)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    parser.add_argument("--version", action="version", version=f"nuro {_version()}")
     sub = parser.add_subparsers(dest="command")
+
+    # nuro setup
+    p_setup = sub.add_parser(
+        "setup",
+        help="Create .venv, install the project and run the doctor (fresh computer)",
+    )
+    p_setup.add_argument(
+        "--recreate", action="store_true", help="Delete and rebuild .venv"
+    )
+    p_setup.add_argument(
+        "--confirm", default=None, help="Required token for --recreate: RECREATE"
+    )
+    p_setup.add_argument(
+        "--no-dev", action="store_true", help="Install runtime deps only"
+    )
+    p_setup.add_argument(
+        "--skip-doctor", action="store_true", help="Don't run the doctor afterwards"
+    )
 
     # nuro tui
     p_tui = sub.add_parser(
@@ -93,7 +134,7 @@ def main() -> None:
         help="Launch interactive native terminal TUI (default)",
     )
     p_tui.add_argument(
-        "--port", default=None, help="Serial port (default: auto-detect, COM6 fallback)"
+        "--port", default=None, help="Serial port (default: auto-detect)"
     )
     p_tui.add_argument("--frames", type=int, default=None, help="Batch frame limit")
 
@@ -125,7 +166,7 @@ def main() -> None:
     p_web.add_argument(
         "--serial-port",
         default=None,
-        help="ESP32-S3 serial port (default: auto-detect, COM6 fallback)",
+        help="ESP32-S3 serial port (default: auto-detect)",
     )
     p_web.add_argument(
         "--no-browser", action="store_true", help="Don't auto-open browser"
@@ -136,7 +177,7 @@ def main() -> None:
         "gui", help="Launch live animated 4-panel interactive graphical window"
     )
     p_gui.add_argument(
-        "--port", default=None, help="Serial port (default: auto-detect, COM6 fallback)"
+        "--port", default=None, help="Serial port (default: auto-detect)"
     )
 
     # nuro bench
@@ -145,7 +186,7 @@ def main() -> None:
         "--frames", default=1000, type=int, help="Frame count (default: 1000)"
     )
     p_bench.add_argument(
-        "--port", default=None, help="Serial port (default: auto-detect, COM6 fallback)"
+        "--port", default=None, help="Serial port (default: auto-detect)"
     )
 
     # nuro eval
@@ -164,7 +205,7 @@ def main() -> None:
         "info", help="Probe the real ESP32-S3 (read-only) and print its facts"
     )
     p_info.add_argument(
-        "--port", default=None, help="Serial port (default: auto-detect, COM6 fallback)"
+        "--port", default=None, help="Serial port (default: auto-detect)"
     )
     p_info.add_argument("--json", action="store_true", help="Emit JSON instead of text")
 
@@ -174,7 +215,7 @@ def main() -> None:
         help="Check Python deps, board presence, firmware build and repo state",
     )
     p_doctor.add_argument(
-        "--port", default=None, help="Serial port (default: auto-detect, COM6 fallback)"
+        "--port", default=None, help="Serial port (default: auto-detect)"
     )
 
     # nuro calc (Interactive Scientific Graphing Calculator Shell or One-liner)
@@ -222,12 +263,16 @@ def main() -> None:
     p_obs.add_argument(
         "vault",
         nargs="*",
-        help="Optional vault name in G:\\obsidian (e.g. 'ICSE Class 10')",
+        help="Optional vault name (e.g. 'ICSE Class 10'; default: Neural Loop Calculations)",
     )
     p_graph = sub.add_parser(
         "graph", help="Sync & launch Obsidian interactive Color-Coded Graph View"
     )
-    p_graph.add_argument("vault", nargs="*", help="Optional vault name in G:\\obsidian")
+    p_graph.add_argument(
+        "vault",
+        nargs="*",
+        help="Optional vault name (default: Neural Loop Calculations)",
+    )
 
     # nuro solve / math
     p_solve = sub.add_parser(
@@ -241,10 +286,10 @@ def main() -> None:
 
     # nuro term / serial (Direct interactive serial terminal to ESP32-S3 hardware)
     p_term = sub.add_parser(
-        "term", help="Interactive direct serial console to ESP32-S3 on COM6"
+        "term", help="Interactive direct serial console to the ESP32-S3"
     )
     p_term.add_argument(
-        "--port", default=None, help="Serial port (default: auto-detect, COM6 fallback)"
+        "--port", default=None, help="Serial port (default: auto-detect)"
     )
     p_term.add_argument(
         "--baud", default=2000000, type=int, help="Baud rate (default: 2000000)"
@@ -301,13 +346,25 @@ def main() -> None:
 
     cmd = args.command or "calc"
 
+    if cmd == "setup":
+        from host.setup_env import run_setup
+
+        raise SystemExit(
+            run_setup(
+                recreate=getattr(args, "recreate", False),
+                confirm=getattr(args, "confirm", None),
+                with_dev=not getattr(args, "no_dev", False),
+                skip_doctor=getattr(args, "skip_doctor", False),
+            )
+        )
+
     if cmd in ("tui", "neural", "mneuro", "live"):
         from host.board import resolve_port
         from host.dash.tui import run_tui
 
         port = resolve_port(getattr(args, "port", None))
         frames = getattr(args, "frames", None)
-        print(f"[nuro] serial port: {port}")
+        _announce_port(port)
         run_tui(port=port, max_frames=frames)
 
     elif cmd == "demo":
@@ -328,7 +385,7 @@ def main() -> None:
         web_port = getattr(args, "port", 8765)
         ser_port = resolve_port(getattr(args, "serial_port", None))
         no_browse = getattr(args, "no_browser", False)
-        print(f"[nuro] serial port: {ser_port}")
+        _announce_port(ser_port)
 
         if not no_browse:
 
@@ -347,7 +404,7 @@ def main() -> None:
         from host.dash.app import run_live_interactive_cockpit
 
         port = resolve_port(getattr(args, "port", None))
-        print(f"[nuro] serial port: {port}")
+        _announce_port(port)
         run_live_interactive_cockpit(port=port)
 
     elif cmd == "bench":
@@ -356,7 +413,7 @@ def main() -> None:
 
         port = resolve_port(getattr(args, "port", None))
         n_frames = getattr(args, "frames", 1000)
-        print(f"[nuro] serial port: {port}")
+        _announce_port(port)
         res = run_hil_benchmark(port=port, n_frames=n_frames)
         import json
 
@@ -397,8 +454,8 @@ def main() -> None:
         import pytest
         from pathlib import Path
 
-        test_file = str(Path(__file__).resolve().parents[1] / "tests/test_suite.py")
-        sys.exit(pytest.main(["-v", test_file]))
+        tests_dir = str(Path(__file__).resolve().parents[1] / "tests")
+        sys.exit(pytest.main(["-v", tests_dir]))
 
     elif cmd == "figures":
         from host.analysis.figures import generate_all_figures

@@ -51,18 +51,20 @@ The stock PlatformIO `esp32-s3-devkitc-1` board is the **N8 / no-PSRAM** variant
 ## Quick start
 
 ```powershell
-cd "G:\MIT Planner\mit\neural-loop"
+# Copy or clone the repository anywhere, then bootstrap once:
+.\setup.cmd                # Windows (creates .venv, installs nuro, runs doctor)
+# ./setup.sh               # Linux / macOS
 
-# One-time environment
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+# Optional, once per computer: put `nuro` on PATH
+.\install.ps1 -Apply
 
 # Showcase: web cockpit + TUI + matplotlib GUI
-.\.venv\Scripts\python.exe -m host.cli demo
-
-# Or use the launcher from any directory (if C:\Users\Administrator\bin is on PATH)
 nuro demo
 ```
+
+That is the whole procedure on a fresh machine, including a different COM port
+or a board that has never been plugged into this PC. Details, drivers and
+per-OS notes: [`docs/PLUG_AND_PLAY.md`](docs/PLUG_AND_PLAY.md).
 
 `nuro demo` starts three views:
 
@@ -76,12 +78,13 @@ Windows serial ports are exclusive, so the TUI and GUI deliberately run as **lab
 
 | Command | What it does |
 |---|---|
+| `nuro setup` | Create `.venv`, install the project, run the doctor |
 | `nuro demo` | All three views in one command |
 | `nuro tui` | Terminal cockpit (live board if free) |
 | `nuro web` | Localhost cockpit + browser |
 | `nuro gui` | Matplotlib cockpit |
 | `nuro info` | **Real** read-only board probe (chip, MAC, flash, PSRAM) |
-| `nuro doctor` | Environment, dependencies, board and repo readiness |
+| `nuro doctor` | Environment, dependencies, PATH, drivers, board and repo readiness |
 | `nuro bench --frames 500` | Live HIL benchmark; writes `runs/<id>/metrics.json` |
 | `nuro eval` | Gates G5/G6 on **synthetic surrogates** |
 | `nuro test` | Full pytest suite |
@@ -95,7 +98,7 @@ Windows serial ports are exclusive, so the TUI and GUI deliberately run as **lab
 Port selection is centralised in `host/board.py`:
 
 ```
---port  >  NURO_PORT  >  auto-detected CH343/ESP32-S3  >  COM6 fallback
+--port  >  NURO_PORT  >  auto-detected CH343/ESP32-S3  >  COM6 (Windows only)
 ```
 
 ---
@@ -104,6 +107,8 @@ Port selection is centralised in `host/board.py`:
 
 ```text
 neural-loop/
+├── setup.cmd / setup.ps1 / setup.sh   one-command bootstrap (any computer)
+├── pyproject.toml                     package metadata + `nuro` entry point
 ├── firmware/                     ESP32-S3 Arduino/PlatformIO project
 │   ├── boards/                   N16R8 board manifest (16 MB, qio_opi)
 │   ├── components/
@@ -114,6 +119,7 @@ neural-loop/
 ├── host/
 │   ├── board.py                  port policy + read-only identity probe
 │   ├── cli.py                    `nuro` command surface
+│   ├── setup_env.py              venv bootstrap used by `nuro setup`
 │   ├── demo.py                   three-view orchestrator
 │   ├── doctor.py                 environment/board readiness
 │   ├── hil/                      protocol codec, DSP reference, HIL transport
@@ -125,9 +131,10 @@ neural-loop/
 │   └── obsidian_sync.py          vault + graph sync
 ├── tests/
 │   ├── golden/                   committed byte-exact fixtures (read-only)
-│   └── test_suite.py             hermetic verification suite
+│   ├── test_suite.py             hermetic verification suite
+│   └── test_board_ports.py       hermetic port-ranking tests
 ├── tools/                        verified full-flash backup / restore
-├── docs/                         CLAIMS.md, RECOVERY.md, figures
+├── docs/                         CLAIMS.md, PLUG_AND_PLAY.md, RECOVERY.md, figures
 ├── backups/                      git-ignored full-flash images + manifest
 └── runs/                         HIL metrics (metrics.json tracked)
 ```
@@ -218,5 +225,6 @@ MIT. See [`LICENSE`](LICENSE).
 ## Links
 
 - [`docs/CLAIMS.md`](docs/CLAIMS.md) — evidence ledger and forbidden sentences
+- [`docs/PLUG_AND_PLAY.md`](docs/PLUG_AND_PLAY.md) — fresh-computer setup, drivers, ports
 - [`docs/RECOVERY.md`](docs/RECOVERY.md) — board safety and unbrick procedure
 - [`AGENTS.md`](AGENTS.md) — guardrails for future contributors/agents

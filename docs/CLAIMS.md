@@ -56,6 +56,9 @@
 | Claim | Status | Evidence | Caveat |
 |---|---|---|---|
 | `nuro demo` shows web + TUI + matplotlib | **IMPLEMENTED** | `host/demo.py`; smoke-tested with `--frames 2` | Only the web cockpit owns the live serial port; TUI/GUI are explicitly labelled in-silico mirrors. |
+| `nuro setup` bootstraps a fresh computer | **IMPLEMENTED** | `host/setup_env.py`; `setup.cmd` / `setup.ps1` / `setup.sh`; `pip install -e .` verified locally | Not yet exercised on a second physical machine. |
+| `nuro` console script from any directory | **VERIFIED** | `pyproject.toml` → `.venv\Scripts\nuro.exe --version` → `nuro 0.3.0` | Windows verified; POSIX entry point untested here. |
+| Port auto-ranking (CH343 → native USB → CP210x → CH340) | **VERIFIED** (unit) | `tests/test_board_ports.py` (10 hermetic tests) | Ranking is tested against synthetic port lists; a second PC with a different bridge is still untested. |
 | `nuro info` probes the real board | **IMPLEMENTED** | `python -m host.cli info` → real chip/MAC/flash/PSRAM | Read-only; it resets into the ROM bootloader via esptool. |
 | `nuro doctor` checks the environment | **IMPLEMENTED** | `python -m host.cli doctor` → 19 pass / 1 warn / 0 fail locally | The git warning is expected while the tree is dirty. |
 | Port auto-detection with COM6 fallback | **IMPLEMENTED** | `host/board.py`; `NURO_PORT` env var | Explicit `--port` always wins. |
