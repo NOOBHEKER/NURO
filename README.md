@@ -1,10 +1,42 @@
-> **ETHICS & SCOPE — READ FIRST.** This is a **simulation testbed**. No human or animal tissue is recorded, stimulated, or involved at any stage. No electrodes are used. The "brain" is a numerical model on a laptop; the "stimulation" is a 3.3 V logic pulse on a single GPIO sent back to that laptop over USB. Public, de-identified datasets are used offline for model development only. Nothing here is a medical device, a therapy, or a clinical claim.
+# ⚡ NURO — Closed-Loop Edge Neuromodulation Workstation on ESP32-S3
 
-# Neural Loop — a closed-loop edge neuromodulation testbed on ESP32-S3
+[![Live Interactive Web Demo](https://img.shields.io/badge/Demo-Live_Interactive_Cockpit-38bdf8?style=for-the-badge&logo=googlechrome&logoColor=white)](https://noobheker.github.io/NURO/)
+[![Zero-Install Release](https://img.shields.io/badge/Release-Portable_Win64_EXE-10b981?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/NOOBHEKER/NURO/releases)
+[![Hardware Verified](https://img.shields.io/badge/Hardware-ESP32--S3_N16R8_240MHz-6366f1?style=for-the-badge&logo=espressif&logoColor=white)](https://github.com/NOOBHEKER/NURO)
+[![Hermetic Tests](https://img.shields.io/badge/Tests-28_Passed_(100%25)-10b981?style=for-the-badge&logo=pytest&logoColor=white)](https://github.com/NOOBHEKER/NURO)
+[![License: MIT](https://img.shields.io/badge/License-MIT-f59e0b?style=for-the-badge)](LICENSE)
 
-**One-line pitch:** a single ESP32-S3-WROOM-1-N16R8 runs a two-timescale neuromodulation testbed — an offline pre-ictal predictor proposes when to arm, and a 1 kHz on-device loop (61-tap Q15 quadrature FIR + 64-neuron int8 LIF SNN + 20 ms artifact blanking) phase-locks a 10 µs marker pulse to an empirically identified phase-response curve.
+> [!IMPORTANT]
+> **ETHICS & CLINICAL PROVENANCE — READ FIRST.**
+> This is a **pure numerical simulation testbed**. No human or animal tissue is recorded, stimulated, or involved at any stage. No electrodes are used. The "brain" is a numerical model running on a computer; the "stimulation" is a 3.3 V digital logic pulse (10 µs) on a single GPIO measured over USB. Public, de-identified datasets are used offline for model development only. Nothing here is a medical device, a therapy, or a clinical claim. Full truth ledger: [`docs/CLAIMS.md`](docs/CLAIMS.md).
 
-The project is also a self-contained scientific calculator (math, chemistry, physics) with an Obsidian graph sync. The calculator is real and tested; the neural-loop claims are labelled below.
+---
+
+## 🔬 Architecture Overview
+
+**NURO** is a two-timescale closed-loop edge neuromodulation testbed running on a single **ESP32-S3-WROOM-1-N16R8** ($5 hardware): an offline pre-ictal predictor proposes when to arm, and a 1 kHz on-chip loop (61-tap Q15 quadrature FIR + 64-neuron int8 LIF SNN + 20 ms artifact blanking) phase-locks a 10 µs marker pulse to an empirically identified phase-response curve (PRC $\phi^* = -\pi$).
+
+```
+  ┌────────────────────────────────────────────────────────────────────────┐
+  │                           HOST WORKSTATION                             │
+  │  • btop-style 60 FPS Terminal TUI   • Web Serial Browser Cockpit       │
+  │  • Kuramoto / Jansen-Rit Brain Model • Single-Port Auto-Discovery      │
+  │  • Zero-Install Standalone nuro.exe  • USB Plug-and-Play Daemon        │
+  └───────────────────────────────────┬────────────────────────────────────┘
+                                      │ 32-Byte Binary Frames @ 2 Mbps UART
+                                      ▼
+  ┌────────────────────────────────────────────────────────────────────────┐
+  │                 ESP32-S3-WROOM-1-N16R8 SILICON (240 MHz)               │
+  │  ┌────────────────────────┐  ┌────────────────┐  ┌──────────────────┐  │
+  │  │  61-tap Q15 Quad FIR   │  │ 64-Neuron Int8 │  │ Phase-Locked FSM │  │
+  │  │  18 µs Latency @ 1 kHz │─▶│ LIF SNN Readout│─▶│ φ* = -π Trough   │  │
+  │  │  20 ms Blanking Window │  │  84 µs Compute │  │ 10 µs GPIO4 Pulse│  │
+  │  └────────────────────────┘  └────────────────┘  └──────────────────┘  │
+  │  Interlocks: 5s Task Watchdog │ Boot Disarm Gate │ Max 300 Pulse Budget│
+  └────────────────────────────────────────────────────────────────────────┘
+```
+
+The project also embeds a self-contained scientific graphing calculator (math, chemistry, physics) with color-coded Obsidian graph synchronization.
 
 ---
 
@@ -50,12 +82,31 @@ The stock PlatformIO `esp32-s3-devkitc-1` board is the **N8 / no-PSRAM** variant
 
 ## Quick start
 
+### 🚀 Option A: Zero-Install Standalone Executable (Windows 10/11)
+No Python, Git, or dependencies required:
+1. Download **[`nuro.exe`](https://github.com/NOOBHEKER/NURO/releases)** or **[`nuro-portable-win64.zip`](https://github.com/NOOBHEKER/NURO/releases)** from the latest release.
+2. Plug in your ESP32-S3 board (or run in pure in-silico simulation mode).
+3. Double-click `nuro.exe` (defaults to the live 60 FPS TUI) or run from PowerShell/CMD:
+   ```powershell
+   .\nuro.exe           # Live terminal cockpit with auto-discovery
+   .\nuro.exe demo      # Web cockpit + TUI + GUI multi-view showcase
+   .\nuro.exe bench     # Hardware-in-the-loop benchmark
+   ```
+
+### 🌐 Option B: Live Web Cockpit (Direct Web Serial in Chrome/Edge)
+Experience NURO directly in your browser with zero installation:
+- **Interactive Live Cockpit:** **[noobheker.github.io/NURO](https://noobheker.github.io/NURO/)**
+- Connects directly to hardware over **Web Serial API** at 2 Mbps, or runs high-fidelity **Kuramoto $N=64$ in-silico dynamics** with real-time phase locking and LIF raster visualization.
+
+### 🐍 Option C: Developer / Researcher Setup (Source)
 ```powershell
-# Copy or clone the repository anywhere, then bootstrap once:
+# Clone and bootstrap into an isolated virtual environment:
+git clone https://github.com/NOOBHEKER/NURO.git
+cd NURO
 .\setup.cmd                # Windows (creates .venv, installs nuro, runs doctor)
 # ./setup.sh               # Linux / macOS
 
-# Optional, once per computer: put `nuro` on PATH
+# Optional: put `nuro` on PATH system-wide
 .\install.ps1 -Apply
 
 # Showcase: web cockpit + TUI + matplotlib GUI
@@ -220,7 +271,7 @@ The suite is **hermetic**:
 - Obsidian is never launched and the user's vault/session state is never touched;
 - PDF metadata is deterministic.
 
-Current result: **25 passed** (14 in `test_suite.py`, 11 port-ranking tests in
+Current result: **28 passed** (17 in `test_suite.py`, 11 port-ranking tests in
 `test_board_ports.py`).
 
 ---

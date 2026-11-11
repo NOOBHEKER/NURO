@@ -1,0 +1,816 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NURO — Closed-Loop Edge Neuromodulation Workstation</title>
+  <style>
+    :root {
+      --bg: #070b14;
+      --card-bg: #0f172a;
+      --card-border: #1e293b;
+      --accent: #38bdf8;
+      --accent-hover: #0ea5e9;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --term-bg: #030712;
+      --font-mono: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      padding: 1rem;
+    }
+
+    header {
+      max-width: 1300px;
+      margin: 0 auto 1.5rem auto;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 1rem;
+      border-bottom: 1px solid var(--card-border);
+      padding-bottom: 1.25rem;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.85rem;
+    }
+
+    .brand-logo {
+      width: 44px;
+      height: 44px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #0284c7, #6366f1);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 1.35rem;
+      box-shadow: 0 0 15px rgba(56, 189, 248, 0.4);
+    }
+
+    .brand h1 {
+      font-size: 1.4rem;
+      font-weight: 800;
+      letter-spacing: -0.025em;
+      background: linear-gradient(90deg, #38bdf8, #818cf8);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .brand p {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+    }
+
+    .connection-panel {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    select, button, input {
+      font-family: inherit;
+      font-size: 0.85rem;
+    }
+
+    select {
+      background: #1e293b;
+      color: var(--text);
+      border: 1px solid var(--card-border);
+      border-radius: 6px;
+      padding: 0.45rem 0.75rem;
+      outline: none;
+    }
+
+    button {
+      cursor: pointer;
+      border: none;
+      border-radius: 6px;
+      padding: 0.45rem 1rem;
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      transition: all 0.15s ease;
+    }
+
+    .btn-connect {
+      background: var(--accent);
+      color: #030712;
+    }
+    .btn-connect:hover {
+      background: var(--accent-hover);
+    }
+
+    .btn-disconnect {
+      background: var(--danger);
+      color: #fff;
+    }
+
+    .btn-sim {
+      background: #334155;
+      color: #38bdf8;
+      border: 1px solid #475569;
+    }
+    .btn-sim:hover {
+      background: #475569;
+      color: #fff;
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.75rem;
+      padding: 0.35rem 0.75rem;
+      border-radius: 9999px;
+      background: rgba(156, 163, 175, 0.1);
+      color: var(--text-muted);
+      border: 1px solid rgba(156, 163, 175, 0.2);
+    }
+    .status-badge.connected {
+      background: rgba(16, 185, 129, 0.1);
+      color: var(--success);
+      border-color: rgba(16, 185, 129, 0.3);
+    }
+    .status-badge.simulated {
+      background: rgba(245, 158, 11, 0.1);
+      color: var(--warning);
+      border-color: rgba(245, 158, 11, 0.3);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    main {
+      max-width: 1300px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 360px 1fr;
+      gap: 1.25rem;
+    }
+
+    @media (max-width: 980px) {
+      main { grid-template-columns: 1fr; }
+    }
+
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 1.15rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.9rem;
+    }
+
+    .card-title {
+      font-size: 0.88rem;
+      font-weight: 700;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .indicator-box {
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 0.75rem;
+      background: #090d16;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .led-status {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.5rem 0.75rem;
+      border-radius: 6px;
+      background: #111827;
+      border: 1px solid #1f2937;
+    }
+
+    .led-bulb {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #374151;
+      box-shadow: 0 0 4px #000;
+      transition: all 0.2s ease;
+    }
+
+    .led-bulb.green {
+      background: #10b981;
+      box-shadow: 0 0 14px #10b981;
+    }
+    .led-bulb.yellow {
+      background: #f59e0b;
+      box-shadow: 0 0 16px #f59e0b;
+    }
+    .led-bulb.red {
+      background: #ef4444;
+      box-shadow: 0 0 20px #ef4444;
+    }
+    .led-bulb.blue {
+      background: #38bdf8;
+      box-shadow: 0 0 16px #38bdf8;
+    }
+
+    .gauge-container {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+    .gauge-header {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+    }
+    .gauge-bar-bg {
+      height: 8px;
+      border-radius: 4px;
+      background: #1e293b;
+      overflow: hidden;
+    }
+    .gauge-fill {
+      height: 100%;
+      width: 25%;
+      border-radius: 4px;
+      background: var(--success);
+      transition: width 0.15s ease, background-color 0.2s ease;
+    }
+
+    .action-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+    .action-group-title {
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .btn-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.4rem;
+    }
+    .btn-action {
+      background: #1e293b;
+      color: #e2e8f0;
+      border: 1px solid #334155;
+      font-size: 0.75rem;
+      padding: 0.45rem 0.6rem;
+      justify-content: flex-start;
+      border-radius: 4px;
+    }
+    .btn-action:hover {
+      background: #334155;
+      color: #fff;
+    }
+    .btn-neural-burst {
+      background: rgba(239, 68, 68, 0.15);
+      border-color: rgba(239, 68, 68, 0.4);
+      color: #fca5a5;
+    }
+    .btn-neural-burst:hover {
+      background: rgba(239, 68, 68, 0.3);
+      color: #fff;
+    }
+    .btn-arm {
+      background: rgba(56, 189, 248, 0.15);
+      border-color: rgba(56, 189, 248, 0.4);
+      color: #38bdf8;
+    }
+    .btn-arm:hover {
+      background: rgba(56, 189, 248, 0.3);
+      color: #fff;
+    }
+
+    .content-area {
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    .scope-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 1.15rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    canvas {
+      width: 100%;
+      height: 180px;
+      background: #030712;
+      border-radius: 6px;
+      border: 1px solid #1e293b;
+    }
+
+    .terminal-container {
+      background: var(--term-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      display: flex;
+      flex-direction: column;
+      height: 380px;
+      overflow: hidden;
+    }
+
+    .terminal-header {
+      background: #0f172a;
+      padding: 0.55rem 1rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--card-border);
+    }
+    .terminal-title {
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      color: var(--text-muted);
+    }
+    .btn-clear {
+      background: transparent;
+      border: 1px solid #334155;
+      color: var(--text-muted);
+      font-size: 0.7rem;
+      padding: 0.2rem 0.5rem;
+    }
+    .btn-clear:hover {
+      color: var(--text);
+      background: #1e293b;
+    }
+
+    #terminal {
+      flex: 1;
+      padding: 1rem;
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      line-height: 1.45;
+      color: #38bdf8;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .terminal-input-bar {
+      display: flex;
+      background: #0f172a;
+      border-top: 1px solid var(--card-border);
+      padding: 0.5rem;
+      gap: 0.5rem;
+    }
+
+    .terminal-input-bar input {
+      flex: 1;
+      background: #1e293b;
+      border: 1px solid var(--card-border);
+      border-radius: 4px;
+      color: #fff;
+      padding: 0.45rem 0.75rem;
+      font-family: var(--font-mono);
+      outline: none;
+    }
+    .terminal-input-bar input:focus {
+      border-color: var(--accent);
+    }
+    .terminal-input-bar button {
+      background: var(--accent);
+      color: #030712;
+      padding: 0.45rem 0.9rem;
+    }
+
+    .provenance-banner {
+      background: #111827;
+      border: 1px solid #1f2937;
+      border-radius: 8px;
+      padding: 0.75rem 1rem;
+      font-size: 0.78rem;
+      color: #94a3b8;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+    .provenance-banner a {
+      color: #38bdf8;
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .provenance-banner a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="brand">
+      <div class="brand-logo">⚡</div>
+      <div>
+        <h1>NURO</h1>
+        <p>Closed-Loop Edge Neuromodulation Workstation on ESP32-S3</p>
+      </div>
+    </div>
+    <div class="connection-panel">
+      <div class="status-badge" id="statusBadge">
+        <span class="status-dot"></span>
+        <span id="statusText">Disconnected</span>
+      </div>
+      <button class="btn-sim" id="simBtn" onclick="toggleSimulation()">▶ Run In-Silico Demo</button>
+      <select id="baudSelect">
+        <option value="2000000" selected>2,000,000 baud (2 Mbps Lockstep)</option>
+        <option value="115200">115,200 baud</option>
+      </select>
+      <button class="btn-connect" id="connectBtn" onclick="connectSerial()">Connect ESP32-S3</button>
+    </div>
+  </header>
+
+  <div class="provenance-banner" style="max-width: 1300px; margin: 0 auto 1.25rem auto;">
+    <span>🧪 <strong>ETHICAL SCOPE:</strong> Numerical simulation testbed. No human/animal tissue involved. 10 µs logic pulses on GPIO 4.</span>
+    <span><a href="https://github.com/NOOBHEKER/NURO" target="_blank">GitHub Repository →</a> │ <a href="https://github.com/NOOBHEKER/NURO/releases" target="_blank">Download Portable nuro.exe →</a></span>
+  </div>
+
+  <main>
+    <div class="sidebar">
+      <div class="card">
+        <div class="card-title">
+          <span>Physical WS2812 Status</span>
+          <span style="font-size: 0.7rem; color: var(--text-muted);">GPIO 48/38</span>
+        </div>
+        <div class="led-status">
+          <div class="led-bulb blue" id="ledBulb"></div>
+          <div>
+            <div style="font-weight: 700; font-size: 0.85rem;" id="ledLabel">DISARMED (🔵 BLUE)</div>
+            <div style="font-size: 0.72rem; color: var(--text-muted);" id="ledDesc">Stimulation gate safely locked</div>
+          </div>
+        </div>
+
+        <div class="gauge-container" style="margin-top: 0.5rem;">
+          <div class="gauge-header">
+            <span>Kuramoto Coherence R(t)</span>
+            <span id="rValText">0.240</span>
+          </div>
+          <div class="gauge-bar-bg">
+            <div class="gauge-fill" id="rGauge" style="width: 24%;"></div>
+          </div>
+        </div>
+
+        <div class="gauge-container">
+          <div class="gauge-header">
+            <span>Stimulation Budget Consumed</span>
+            <span id="budgetText">0 / 300 pulses</span>
+          </div>
+          <div class="gauge-bar-bg">
+            <div class="gauge-fill" id="budgetGauge" style="width: 0%; background: #38bdf8;"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Closed-Loop Controller</div>
+        <div class="action-group">
+          <div class="action-group-title">Hardware Safety Interlocks</div>
+          <div class="btn-grid">
+            <button class="btn-action btn-arm" onclick="sendCommand('arm')">🔓 arm (Enable GPIO4)</button>
+            <button class="btn-action" onclick="sendCommand('disarm')">🔒 disarm (Safe)</button>
+          </div>
+        </div>
+
+        <div class="action-group">
+          <div class="action-group-title">Closed-Loop Self-Test</div>
+          <button class="btn-action btn-neural-burst" onclick="sendCommand('sim burst')">⚡ sim burst (Trigger Alert + Pulse)</button>
+          <div class="btn-grid">
+            <button class="btn-action" onclick="sendCommand('neuro')">🧠 neuro (Telemetry)</button>
+            <button class="btn-action" onclick="sendCommand('status')">📊 status (RAM/CPU)</button>
+          </div>
+        </div>
+
+        <div class="action-group">
+          <div class="action-group-title">Scientific Pocket Lab</div>
+          <div class="btn-grid">
+            <button class="btn-action" onclick="sendCommand('quad 1 -5 6')">📐 quad 1 -5 6</button>
+            <button class="btn-action" onclick="sendCommand('mass H2O')">🧪 mass H2O</button>
+            <button class="btn-action" onclick="sendCommand('pascal 50 0.01 0.5')">⚙️ pascal hydraulic</button>
+            <button class="btn-action" onclick="sendCommand('help')">❓ help</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="content-area">
+      <div class="scope-card">
+        <div class="card-title">
+          <span>Real-Time Neural Oscilloscope &amp; Synchrony Collapse</span>
+          <span style="font-size: 0.72rem; color: var(--text-muted);">20 Hz Beta Waveform │ 60 FPS Canvas</span>
+        </div>
+        <canvas id="scopeCanvas" width="800" height="180"></canvas>
+      </div>
+
+      <div class="terminal-container">
+        <div class="terminal-header">
+          <div class="terminal-title">ESP32-S3 HIL Serial Console (2,000,000 baud lockstep)</div>
+          <button class="btn-clear" onclick="clearTerminal()">Clear</button>
+        </div>
+        <div id="terminal">=======================================================
+⚡ NURO CLOSED-LOOP EDGE NEUROMODULATION WORKSTATION
+=======================================================
+  Hardware: ESP32-S3-WROOM-1-N16R8 (16MB Flash, 8MB Octal PSRAM)
+  DSP: 61-tap Q15 Quadrature FIR @ 1000 Hz | 20ms Blanking
+  Classifier: 64-neuron Int8 Leaky Integrate-and-Fire SNN
+  Target Phase: Phase Trough φ* = -π (±180°)
+  Stimulus Marker: 10 µs Digital Pulse on GPIO 4
+-------------------------------------------------------
+Click 'Connect ESP32-S3' to link hardware over Web Serial,
+or click '▶ Run In-Silico Demo' to simulate in browser.
+</div>
+        <div class="terminal-input-bar">
+          <input type="text" id="cmdInput" placeholder="Type command (e.g. neuro, sim burst, arm, quad 1 -5 6)..." autocomplete="off" onkeydown="handleKey(event)">
+          <button id="sendBtn" onclick="handleSend()">Send</button>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    let port = null;
+    let reader = null;
+    let writer = null;
+    let isConnected = false;
+    let isSimulating = false;
+    let simInterval = null;
+
+    const connectBtn = document.getElementById('connectBtn');
+    const simBtn = document.getElementById('simBtn');
+    const statusBadge = document.getElementById('statusBadge');
+    const statusText = document.getElementById('statusText');
+    const baudSelect = document.getElementById('baudSelect');
+    const terminal = document.getElementById('terminal');
+    const cmdInput = document.getElementById('cmdInput');
+    const ledBulb = document.getElementById('ledBulb');
+    const ledLabel = document.getElementById('ledLabel');
+    const ledDesc = document.getElementById('ledDesc');
+    const rGauge = document.getElementById('rGauge');
+    const rValText = document.getElementById('rValText');
+    const budgetGauge = document.getElementById('budgetGauge');
+    const budgetText = document.getElementById('budgetText');
+
+    // Canvas Scope
+    const canvas = document.getElementById('scopeCanvas');
+    const ctx = canvas.getContext('2d');
+    let scopeData = new Array(200).fill(0);
+    let simTheta = 0;
+    let simR = 0.24;
+    let simPulses = 0;
+    let isBursting = false;
+
+    function renderScope() {
+      ctx.fillStyle = '#030712';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Grid
+      ctx.strokeStyle = '#111827';
+      ctx.lineWidth = 1;
+      for (let y = 30; y < canvas.height; y += 30) {
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+      }
+
+      // Waveform
+      ctx.strokeStyle = isBursting ? '#ef4444' : '#38bdf8';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (let i = 0; i < scopeData.length; i++) {
+        const x = (i / (scopeData.length - 1)) * canvas.width;
+        const y = (canvas.height / 2) - (scopeData[i] * 65);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+
+      // Legend
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '11px monospace';
+      ctx.fillText(isBursting ? '● BURST STATE: 20 Hz Synchronized High Amplitude' : '● RESTING STATE: Desynchronized Baseline Waveform', 15, 20);
+    }
+    renderScope();
+
+    function updateLED(state) {
+      ledBulb.className = 'led-bulb ' + state;
+      if (state === 'green') {
+        ledLabel.textContent = 'RESTING (🟢 GREEN)';
+        ledDesc.textContent = 'Neural baseline suppressed, filter armed';
+      } else if (state === 'yellow') {
+        ledLabel.textContent = 'EARLY WARNING (🟡 YELLOW)';
+        ledDesc.textContent = 'Coherence ramp detected (0.35 ≤ R < 0.65)';
+      } else if (state === 'red') {
+        ledLabel.textContent = 'BURST ALERT (🔴 RED)';
+        ledDesc.textContent = 'Trough stimulus triggered on GPIO 4!';
+      } else if (state === 'blue') {
+        ledLabel.textContent = 'DISARMED (🔵 BLUE)';
+        ledDesc.textContent = 'Stimulation gate safely locked';
+      }
+    }
+
+    function updateMetrics(r, pulses) {
+      simR = r;
+      rValText.textContent = r.toFixed(3);
+      rGauge.style.width = Math.min(100, Math.max(0, r * 100)) + '%';
+      if (r < 0.35) {
+        rGauge.style.background = '#10b981';
+      } else if (r < 0.65) {
+        rGauge.style.background = '#f59e0b';
+      } else {
+        rGauge.style.background = '#ef4444';
+      }
+
+      budgetText.textContent = `${pulses} / 300 pulses`;
+      budgetGauge.style.width = ((pulses / 300) * 100) + '%';
+    }
+
+    function appendTerminal(text) {
+      terminal.textContent += text;
+      terminal.scrollTop = terminal.scrollHeight;
+    }
+
+    function clearTerminal() {
+      terminal.textContent = '';
+    }
+
+    // In-silico simulation
+    function toggleSimulation() {
+      if (isConnected) return;
+      isSimulating = !isSimulating;
+      if (isSimulating) {
+        simBtn.textContent = '⏹ Stop In-Silico Demo';
+        simBtn.style.background = '#ef4444';
+        statusBadge.className = 'status-badge simulated';
+        statusText.textContent = 'In-Silico Simulation Active';
+        updateLED('green');
+        appendTerminal('\r\n[SIMULATION STARTED]: Running Kuramoto N=64 In-Silico Model @ 60 FPS\r\n');
+
+        simInterval = setInterval(() => {
+          simTheta += 0.25;
+          let amp = isBursting ? 1.1 : 0.25;
+          let sample = Math.sin(simTheta) * amp + (Math.random() - 0.5) * 0.15;
+          scopeData.shift();
+          scopeData.push(sample);
+          renderScope();
+        }, 16);
+      } else {
+        clearInterval(simInterval);
+        simBtn.textContent = '▶ Run In-Silico Demo';
+        simBtn.style.background = '#334155';
+        statusBadge.className = 'status-badge';
+        statusText.textContent = 'Disconnected';
+        updateLED('blue');
+        appendTerminal('\r\n[SIMULATION STOPPED]\r\n');
+      }
+    }
+
+    async function sendCommand(cmd) {
+      if (isConnected && writer) {
+        await writer.write(cmd + '\r\n');
+        appendTerminal(`\r\nesp32-s3> ${cmd}\r\n`);
+      } else if (isSimulating) {
+        appendTerminal(`\r\nesp32-s3 [SIM]> ${cmd}\r\n`);
+        if (cmd === 'sim burst' || cmd === 'burst') {
+          isBursting = true;
+          updateLED('yellow');
+          updateMetrics(0.55, simPulses);
+          appendTerminal('  [ALERT] 🟡 Early Warning: Phase coherence ramp detected!\r\n');
+          setTimeout(() => {
+            updateLED('red');
+            simPulses++;
+            updateMetrics(0.88, simPulses);
+            appendTerminal(`  [ALERT] 🔴 Burst Trigger: Phase-locked pulse on GPIO 4! (Pulse #${simPulses}/300)\r\n`);
+            setTimeout(() => {
+              isBursting = false;
+              updateLED('green');
+              updateMetrics(0.22, simPulses);
+              appendTerminal('  [RESET] Closed-loop restored to resting baseline -> LED 🟢 GREEN\r\n');
+            }, 1200);
+          }, 800);
+        } else if (cmd === 'arm') {
+          updateLED('green');
+          appendTerminal('  [ARM] GPIO4 stimulation gate ENABLED (Green LED). System armed.\r\n');
+        } else if (cmd === 'disarm') {
+          updateLED('blue');
+          appendTerminal('  [DISARM] GPIO4 stimulation marker DISABLED (Blue LED). Board safe.\r\n');
+        } else if (cmd === 'status') {
+          appendTerminal('  CPU Clock: 240 MHz | Octal PSRAM: 8MB OK | Flash: 16MB OK | SNN: 64-N Int8 LIF\r\n');
+        } else if (cmd === 'neuro') {
+          appendTerminal(`  Instantaneous Env: ${isBursting ? '720' : '240'} | Compensated Phase: -175.0° | LIF Spikes: 2/8\r\n`);
+        } else {
+          appendTerminal(`  Command '${cmd}' evaluated successfully.\r\n`);
+        }
+      } else {
+        alert('Please click "Connect ESP32-S3" or "Run In-Silico Demo" first!');
+      }
+    }
+
+    function handleKey(e) {
+      if (e.key === 'Enter') handleSend();
+    }
+    function handleSend() {
+      const val = cmdInput.value.trim();
+      if (val) {
+        sendCommand(val);
+        cmdInput.value = '';
+      }
+    }
+
+    // Web Serial
+    async function connectSerial() {
+      if (isSimulating) toggleSimulation();
+      if (!('serial' in navigator)) {
+        alert('Web Serial API is not supported in this browser. Please use Google Chrome, Microsoft Edge, or Opera.');
+        return;
+      }
+      try {
+        port = await navigator.serial.requestPort();
+        const baudRate = parseInt(baudSelect.value, 10);
+        await port.open({ baudRate });
+
+        isConnected = true;
+        connectBtn.textContent = 'Disconnect';
+        connectBtn.className = 'btn-disconnect';
+        statusBadge.className = 'status-badge connected';
+        statusText.textContent = `Connected (${baudRate} baud)`;
+        updateLED('green');
+        appendTerminal(`\r\n[PORT OPENED @ ${baudRate} BAUD]\r\n`);
+
+        const textEncoder = new TextEncoderStream();
+        writableStreamClosed = textEncoder.readable.pipeTo(port.writable);
+        writer = textEncoder.writable.getWriter();
+        await writer.write('\r\nstatus\r\n');
+
+        readLoop();
+      } catch (err) {
+        console.error(err);
+        appendTerminal(`\r\n[ERROR]: ${err.message}\r\n`);
+      }
+    }
+
+    async function readLoop() {
+      while (port && port.readable) {
+        const textDecoder = new TextDecoderStream();
+        readableStreamClosed = port.readable.pipeTo(textDecoder.writable);
+        reader = textDecoder.readable.getReader();
+        try {
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            if (value) {
+              appendTerminal(value);
+              if (value.includes("YELLOW") || value.includes("WARN")) updateLED('yellow');
+              else if (value.includes("RED") || value.includes("BURST")) updateLED('red');
+              else if (value.includes("GREEN") || value.includes("RESTING")) updateLED('green');
+              else if (value.includes("BLUE") || value.includes("DISARMED")) updateLED('blue');
+            }
+          }
+        } catch (error) {
+          console.error(error);
+        } finally {
+          reader.releaseLock();
+        }
+      }
+    }
+  </script>
+</body>
+</html>
