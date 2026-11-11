@@ -1,0 +1,23 @@
+{
+  "timestamp": "2026-11-11T16:06:05.389104",
+  "port": "COM6",
+  "baudrate": 2000000,
+  "armed": false,
+  "n_frames_sent": 50,
+  "n_frames_valid": 50,
+  "dropped_frames": 0,
+  "seq_gaps": 0,
+  "rtt_p50_us": 1489.1999999999998,
+  "rtt_p95_us": 1690.215,
+  "rtt_p99_us": 1726.4989999999998,
+  "rtt_max_us": 1758.3,
+  "device_dsp_p50_us": 18.0,
+  "device_dsp_p99_us": 44.43999999999991,
+  "device_compute_p50_us": 84.0,
+  "device_compute_p95_us": 88.55,
+  "device_compute_p99_us": 127.24999999999986,
+  "device_compute_max_us": 164.0,
+  "stim_pulses_fired": 0,
+  "r_initial": 0.8457212271142895,
+  "r_final_mean": 0.0
+}
