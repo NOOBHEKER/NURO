@@ -168,7 +168,7 @@ def render_phase_compass(psi_rad: float, r_val: float, fired: bool) -> List[str]
     center = (
         f"{C_GREEN}{vec_char}{C_RESET}"
         if r_val < 0.35
-        else f"{C_RED}{vec_char}{C_RESET}"
+        else (f"{C_AMBER}{vec_char}{C_RESET}" if r_val < 0.55 else f"{C_RED}{vec_char}{C_RESET}")
     )
     return [
         f"          +π/2 {p[9]}               ",
@@ -385,7 +385,7 @@ def run_tui(
                         if model_idx == 0:
                             patient_brain.reset_to_onset()
                             event_log.append(
-                                f"[KEY] Rewound Patient {patient_ids[pat_idx].upper()} to seizure onset (-5s)"
+                                f"[KEY] Triggered Patient {patient_ids[pat_idx].upper()} seizure burst (R -> {patient_brain.R_empirical[patient_brain.sz_start_idx]:.2f})"
                             )
                         else:
                             k_brain.theta = np.mod(
@@ -419,7 +419,7 @@ def run_tui(
                 bp_out = dsp.step(s1)
                 fired = False
 
-                host_color = 0x10 if r_val < 0.35 else (0x20 if r_val < 0.65 else 0x30)
+                host_color = 0x10 if r_val < 0.35 else (0x20 if r_val < 0.55 else 0x30)
                 sf = SampleFrame(
                     seq=seq,
                     sim_t_us=seq * 1000,
@@ -550,7 +550,7 @@ def run_tui(
                     else f"{C_RED}[LOOP: OFF (ICTAL SURGE)]{C_RESET}"
                 )
             cur_r = r_val
-            r_col = C_GREEN if cur_r < 0.35 else (C_AMBER if cur_r < 0.65 else C_RED)
+            r_col = C_GREEN if cur_r < 0.35 else (C_AMBER if cur_r < 0.55 else C_RED)
             r_bar_len = int(np.clip(round(cur_r * 38), 0, 38))
             r_bar = f"{r_col}{'█' * r_bar_len}{C_GRAY}{'░' * (38 - r_bar_len)}{C_RESET}"
 
@@ -640,7 +640,7 @@ def run_tui(
                 center_c = (
                     f"{C_GREEN}{vec_char}{C_RESET}"
                     if cur_r < 0.35
-                    else f"{C_RED}{vec_char}{C_RESET}"
+                    else (f"{C_AMBER}{vec_char}{C_RESET}" if cur_r < 0.55 else f"{C_RED}{vec_char}{C_RESET}")
                 )
                 compass_c = [
                     f"      +π/2 {pt[9]}",

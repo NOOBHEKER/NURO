@@ -135,14 +135,14 @@ def fetch_edf_segment(
 def bandpass_analytic_signal(
     x: np.ndarray,
     fs: float = 256.0,
-    f_low: float = 3.0,
-    f_high: float = 28.0,
+    f_low: float = 0.5,
+    f_high: float = 25.0,
     axis: int = -1,
 ) -> np.ndarray:
     """Compute analytic signal bandpassed to [f_low, f_high] Hz via single-sided FFT.
 
     Standard single-sided FFT Hilbert representation matching scipy.signal.hilbert
-    with sharp passband filtering for physiological oscillatory phase tracking.
+    with passband filtering covering the delta/theta/alpha seizure discharge rhythm.
     """
     N = x.shape[axis]
     freqs = np.fft.fftfreq(N, d=1.0 / fs)
@@ -165,20 +165,24 @@ def compute_empirical_synchrony(
     """Compute empirical multi-channel Kuramoto order parameter R(t) and collective phase psi(t).
 
     For M scalp EEG electrodes x_k(t):
-      1. Extract instantaneous phase theta_k(t) via Hilbert transform:
-         z_k(t) = x_k(t) + i H[x_k(t)], theta_k(t) = Arg(z_k(t))
-      2. Construct collective Kuramoto phasor across all M electrodes:
-         Z(t) = (1/M) * sum_{k=1}^M exp(i * theta_k(t))
-      3. R_empirical(t) = |Z(t)| in [0, 1]
-         psi_empirical(t) = Arg(Z(t)) in [-pi, pi]
+      1. Extract instantaneous phase theta_k(t) and envelope A_k(t) via Hilbert transform:
+         z_k(t) = x_k(t) + i H[x_k(t)], A_k(t) = |z_k(t)|, theta_k(t) = Arg(z_k(t))
+      2. Construct amplitude-weighted collective Kuramoto phasor across all M electrodes:
+         Z_w(t) = sum_{k=1}^M A_k(t) * exp(i * theta_k(t)) / sum_{k=1}^M A_k(t)
+         In clinical neurophysiology, weighting by instantaneous energy prevents quiet
+         background channels from artificially diluting high-voltage focal seizure discharges.
+      3. R_empirical(t) = |Z_w(t)| in [0, 1]
+         psi_empirical(t) = Arg(Z_w(t)) in [-pi, pi]
       4. Apply moving average smoothing to eliminate high-frequency jitter.
     """
-    z = bandpass_analytic_signal(channels_256, fs=fs, f_low=3.0, f_high=28.0, axis=-1)
+    z = bandpass_analytic_signal(channels_256, fs=fs, f_low=0.5, f_high=25.0, axis=-1)
+    A = np.abs(z) + 1e-6
     theta = np.angle(z)
-    phasors = np.exp(1j * theta)
-    collective = np.mean(phasors, axis=0)
-    r_raw = np.abs(collective).astype(np.float32)
-    psi = np.angle(collective).astype(np.float32)
+
+    # Amplitude-weighted collective Kuramoto phasor (phase-energy coupling)
+    Z_w = np.sum(A * np.exp(1j * theta), axis=0) / np.sum(A, axis=0)
+    r_raw = np.abs(Z_w).astype(np.float32)
+    psi = np.angle(Z_w).astype(np.float32)
 
     w = max(3, int(round(smoothing_ms * fs / 1000.0)))
     if w % 2 == 0:
@@ -321,7 +325,13 @@ class PatientBrain:
         self._load_patient(patient_id, start_at_onset)
 
     def reset_to_onset(self) -> None:
-        """Rewind to 12s before clinical seizure onset."""
+        """Jump directly to seizure burst onset (0.5s before ictal spike discharge)."""
+        self.idx = max(0, self.sz_start_idx - 1000)
+        self.suppression_factor = 1.0
+        self.last_stim_idx = -999999
+
+    def reset_to_baseline(self) -> None:
+        """Rewind to clean inter-ictal baseline (12s before seizure onset)."""
         self.idx = max(0, self.sz_start_idx - 24000)
         self.suppression_factor = 1.0
         self.last_stim_idx = -999999

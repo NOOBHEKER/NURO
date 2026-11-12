@@ -544,7 +544,7 @@ function drawCompass(d, now) {
 
       const px = cx + Math.cos(particles[i].th) * particles[i].rad;
       const py = cy - Math.sin(particles[i].th) * particles[i].rad;
-      cvPhase.fillStyle = smoothR < 0.35 ? '#3FB950' : (smoothR < 0.65 ? '#D29922' : '#F85149');
+      cvPhase.fillStyle = smoothR < 0.35 ? '#3FB950' : (smoothR < 0.55 ? '#D29922' : '#F85149');
       cvPhase.beginPath(); cvPhase.arc(px, py, 2.4, 0, Math.PI * 2); cvPhase.fill();
     }
   }
@@ -611,7 +611,7 @@ function drawHero(d, now) {
   if (smoothR < 0.35) {
     areaGrad.addColorStop(0, 'rgba(63, 185, 80, 0.22)');
     areaGrad.addColorStop(1, 'rgba(63, 185, 80, 0.0)');
-  } else if (smoothR < 0.65) {
+  } else if (smoothR < 0.55) {
     areaGrad.addColorStop(0, 'rgba(210, 153, 34, 0.22)');
     areaGrad.addColorStop(1, 'rgba(210, 153, 34, 0.0)');
   } else {
@@ -633,7 +633,7 @@ function drawHero(d, now) {
 
   // Solid Core Curve R(t) with Glow
   cvHero.shadowBlur = 8;
-  cvHero.shadowColor = smoothR < 0.35 ? '#3FB950' : (smoothR < 0.65 ? '#D29922' : '#F85149');
+  cvHero.shadowColor = smoothR < 0.35 ? '#3FB950' : (smoothR < 0.55 ? '#D29922' : '#F85149');
   cvHero.strokeStyle = smoothR < 0.35 ? '#3FB950' : (d.loop_on ? '#58A6FF' : '#F85149');
   cvHero.lineWidth = 2.4;
   cvHero.beginPath();
@@ -732,7 +732,7 @@ async function poll() {
     const pctCollapse = ((1.0 - curR / 0.89) * 100.0).toFixed(1);
     rBarEl.textContent = barStr;
     rNumEl.textContent = `R(t) = ${curR.toFixed(4)} (${curR < 0.35 ? '-' + pctCollapse + '% SUPPRESSED' : 'ICTAL'})`;
-    const col = curR < 0.35 ? 'var(--green)' : (curR < 0.65 ? 'var(--amber)' : 'var(--red)');
+    const col = curR < 0.35 ? 'var(--green)' : (curR < 0.55 ? 'var(--amber)' : 'var(--red)');
     rBarEl.style.color = col; rNumEl.style.color = col;
 
     const lastPsi = d.psi_tail[d.psi_tail.length - 1] || 0;
@@ -931,7 +931,7 @@ class TuiCockpitEngine:
                 if self.model_idx == 0:
                     self.patient_brain.reset_to_onset()
                     self.events.append(
-                        f"[CLI] Rewound Patient {self.patient_ids[self.pat_idx].upper()} to seizure onset (-5s)"
+                        f"[CLI] Triggered Patient {self.patient_ids[self.pat_idx].upper()} seizure burst (R -> {self.patient_brain.R_empirical[self.patient_brain.sz_start_idx]:.2f})"
                     )
                 else:
                     self.k_brain.theta = np.mod(
@@ -946,7 +946,7 @@ class TuiCockpitEngine:
                 if self.model_idx == 0:
                     self.patient_brain.reset_to_onset()
                     self.events.append(
-                        f"[CLI] Rewound Patient {self.patient_ids[self.pat_idx].upper()} to seizure onset (-5s)"
+                        f"[CLI] Triggered Patient {self.patient_ids[self.pat_idx].upper()} seizure burst (R -> {self.patient_brain.R_empirical[self.patient_brain.sz_start_idx]:.2f})"
                     )
                 else:
                     self.k_brain.theta = np.mod(
@@ -1005,7 +1005,7 @@ class TuiCockpitEngine:
                 self.phase_q15 = bp_out.phase_q15
                 fired = False
 
-                host_color = 0x10 if r_val < 0.35 else (0x20 if r_val < 0.65 else 0x30)
+                host_color = 0x10 if r_val < 0.35 else (0x20 if r_val < 0.55 else 0x30)
                 sf = SampleFrame(
                     seq=self.seq,
                     sim_t_us=self.seq * 1000,
