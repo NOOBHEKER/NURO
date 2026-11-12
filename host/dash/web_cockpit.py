@@ -34,6 +34,7 @@ from host.virtualbrain.kuramoto import KuramotoBrain, KuramotoConfig
 from host.virtualbrain.jansen_rit import JansenRitBrain, JansenRitConfig
 from host.replay.patient_data import PatientBrain
 from host.hil.dsp_ref import DspChainRef
+from host.dash.tui import ZoneTracker
 
 
 BLOCKS = " ▂▃▄▅▆▇█"
@@ -386,6 +387,9 @@ window.addEventListener('keydown', (e) => {
 // Dynamic animation state
 let latestData = null;
 let smoothR = 0.85;
+let zone = 2;  // 0 green,1 amber,2 red: computed server-side by the SAME ZoneTracker as LED/TUI
+const ZCOL = ['#3FB950', '#D29922', '#F85149'];
+const ZVAR = ['var(--green)', 'var(--amber)', 'var(--red)'];
 let smoothPsi = -Math.PI;
 let beamX = 0;
 let radarAngle = 0;
@@ -544,7 +548,7 @@ function drawCompass(d, now) {
 
       const px = cx + Math.cos(particles[i].th) * particles[i].rad;
       const py = cy - Math.sin(particles[i].th) * particles[i].rad;
-      cvPhase.fillStyle = smoothR < 0.35 ? '#3FB950' : (smoothR < 0.55 ? '#D29922' : '#F85149');
+      cvPhase.fillStyle = ZCOL[zone];
       cvPhase.beginPath(); cvPhase.arc(px, py, 2.4, 0, Math.PI * 2); cvPhase.fill();
     }
   }
@@ -566,8 +570,8 @@ function drawCompass(d, now) {
   const hy = cy - Math.sin(smoothPsi) * vecLen;
 
   cvPhase.shadowBlur = 10;
-  cvPhase.shadowColor = smoothR < 0.35 ? '#3FB950' : '#F85149';
-  cvPhase.strokeStyle = smoothR < 0.35 ? '#3FB950' : (latestData && latestData.loop_on ? '#58A6FF' : '#F85149');
+  cvPhase.shadowColor = ZCOL[zone];
+  cvPhase.strokeStyle = ZCOL[zone];
   cvPhase.lineWidth = 2.6;
   cvPhase.beginPath(); cvPhase.moveTo(cx, cy); cvPhase.lineTo(hx, hy); cvPhase.stroke();
   cvPhase.shadowBlur = 0;
@@ -599,19 +603,19 @@ function drawHero(d, now) {
   cvHero.setLineDash([]);
 
   // Target Desynchronization Threshold line R = 0.25
-  const yT = h - 0.25 * (h - 18) - 9;
+  const yT = h - 0.35 * (h - 18) - 9;
   cvHero.strokeStyle = '#3FB950'; cvHero.setLineDash([3, 3]); cvHero.lineWidth = 1.0;
   cvHero.beginPath(); cvHero.moveTo(0, yT); cvHero.lineTo(w, yT); cvHero.stroke();
   cvHero.setLineDash([]);
   cvHero.fillStyle = '#3FB950'; cvHero.font = '9.5px monospace';
-  cvHero.fillText('DESYNCHRONIZED TARGET R < 0.25', w - 195, yT - 4);
+  cvHero.fillText('GREEN < 0.35 | AMBER 0.35-0.55 | RED >= 0.55', w - 195, yT - 4);
 
   // Area Under R(t) Gradient
   const areaGrad = cvHero.createLinearGradient(0, 0, 0, h);
-  if (smoothR < 0.35) {
+  if (zone === 0) {
     areaGrad.addColorStop(0, 'rgba(63, 185, 80, 0.22)');
     areaGrad.addColorStop(1, 'rgba(63, 185, 80, 0.0)');
-  } else if (smoothR < 0.55) {
+  } else if (zone === 1) {
     areaGrad.addColorStop(0, 'rgba(210, 153, 34, 0.22)');
     areaGrad.addColorStop(1, 'rgba(210, 153, 34, 0.0)');
   } else {
@@ -633,8 +637,8 @@ function drawHero(d, now) {
 
   // Solid Core Curve R(t) with Glow
   cvHero.shadowBlur = 8;
-  cvHero.shadowColor = smoothR < 0.35 ? '#3FB950' : (smoothR < 0.55 ? '#D29922' : '#F85149');
-  cvHero.strokeStyle = smoothR < 0.35 ? '#3FB950' : (d.loop_on ? '#58A6FF' : '#F85149');
+  cvHero.shadowColor = ZCOL[zone];
+  cvHero.strokeStyle = ZCOL[zone];
   cvHero.lineWidth = 2.4;
   cvHero.beginPath();
   for (let i = 0; i < rBuf.length; i++) {
@@ -665,15 +669,15 @@ function drawHero(d, now) {
 
   // Floating Digital Value Callout Bubble at latest coordinate
   const curY = h - smoothR * (h - 18) - 9;
-  cvHero.fillStyle = smoothR < 0.35 ? '#3FB950' : '#F85149';
+  cvHero.fillStyle = ZCOL[zone];
   cvHero.beginPath(); cvHero.arc(w - 6, curY, 4, 0, Math.PI * 2); cvHero.fill();
 }
 
 // 60 FPS RequestAnimationFrame Render Loop
 function renderLoop(timestamp) {
   if (latestData) {
-    const curR = latestData.r_buf[latestData.r_buf.length - 1] || 0.85;
-    smoothR += (curR - smoothR) * 0.16;
+    smoothR = (latestData.r_smooth !== undefined) ? latestData.r_smooth : smoothR;
+    zone = (latestData.zone !== undefined) ? latestData.zone : zone;
 
     const curPsi = latestData.psi_tail[latestData.psi_tail.length - 1] || -Math.PI;
     let dPsi = curPsi - smoothPsi;
@@ -724,15 +728,16 @@ async function poll() {
     document.getElementById('topArm').textContent = d.arm_name;
     document.getElementById('topSeq').textContent = d.seq;
 
-    const curR = d.r_buf[d.r_buf.length - 1];
+    const curR = d.r_smooth;
+    const z = d.zone;
     const barFill = Math.max(0, Math.min(30, Math.round(curR * 30)));
     const barStr = '[' + '█'.repeat(barFill) + '░'.repeat(30 - barFill) + ']';
     const rBarEl = document.getElementById('rAsciiBar');
     const rNumEl = document.getElementById('rNumeric');
     const pctCollapse = ((1.0 - curR / 0.89) * 100.0).toFixed(1);
     rBarEl.textContent = barStr;
-    rNumEl.textContent = `R(t) = ${curR.toFixed(4)} (${curR < 0.35 ? '-' + pctCollapse + '% SUPPRESSED' : 'ICTAL'})`;
-    const col = curR < 0.35 ? 'var(--green)' : (curR < 0.55 ? 'var(--amber)' : 'var(--red)');
+    rNumEl.textContent = `R(t) = ${curR.toFixed(4)} ${['GREEN', 'AMBER', 'RED'][z]} (${z === 0 ? '-' + pctCollapse + '% SUPPRESSED' : (z === 1 ? 'TRANSITION' : 'ICTAL')})`;
+    const col = ZVAR[z];
     rBarEl.style.color = col; rNumEl.style.color = col;
 
     const lastPsi = d.psi_tail[d.psi_tail.length - 1] || 0;
@@ -798,6 +803,7 @@ class TuiCockpitEngine:
         )
 
         self.loop_on = True
+        self.zt = ZoneTracker(r0=0.85)
         self.arm_idx = 0
         self.model_idx = 0
         self.arm_names = [
@@ -1005,7 +1011,8 @@ class TuiCockpitEngine:
                 self.phase_q15 = bp_out.phase_q15
                 fired = False
 
-                host_color = 0x10 if r_val < 0.35 else (0x20 if r_val < 0.55 else 0x30)
+                self.zt.update(r_val)
+                host_color = self.zt.led_flags
                 sf = SampleFrame(
                     seq=self.seq,
                     sim_t_us=self.seq * 1000,
@@ -1113,7 +1120,7 @@ class TuiCockpitEngine:
 
                 self.raw_buf.append(round(s1 / 1024.0, 3))
                 self.bp_buf.append(round(bp_out.I_q15 / 1024.0, 3))
-                self.r_buf.append(round(r_val, 4))
+                self.r_buf.append(round(self.zt.r, 4))
                 self.psi_buf.append(round(psi_val, 4))
 
     def snapshot(self) -> Dict[str, Any]:
@@ -1137,6 +1144,9 @@ class TuiCockpitEngine:
                 if self.hw_live
                 else "● IN-SILICO SIMULATOR",
                 "loop_on": self.loop_on,
+                "r_smooth": round(self.zt.r, 4),
+                "zone": self.zt.zone,
+                "zone_name": self.zt.name,
                 "arm_name": self.arm_names[self.arm_idx],
                 "model_name": self.model_names[self.model_idx],
                 "seq": self.seq,

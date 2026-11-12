@@ -62,6 +62,66 @@ BRAILLE_MAP = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Single source of truth for synchrony zone colouring (LED, TUI, web cockpit)
+# ---------------------------------------------------------------------------
+R_AMBER = 0.35  # green < 0.35 <= amber < 0.55 <= red
+R_RED = 0.55
+ZONE_GREEN, ZONE_AMBER, ZONE_RED = 0, 1, 2
+ZONE_NAMES = ("GREEN", "AMBER", "RED")
+ZONE_LED_FLAGS = (0x10, 0x20, 0x30)
+
+
+def raw_zone(r: float) -> int:
+    return ZONE_GREEN if r < R_AMBER else (ZONE_AMBER if r < R_RED else ZONE_RED)
+
+
+class ZoneTracker:
+    """EMA-smoothed R with hysteresis + minimum dwell -> debounced colour zone.
+
+    The same smoothed R and zone drive the RGB LED flag, the TUI gauge/compass
+    and the web cockpit, so every indicator always agrees and never flickers.
+    """
+
+    def __init__(self, alpha: float = 0.015, hyst: float = 0.03,
+                 dwell: int = 80, r0: float = 0.0) -> None:
+        self.alpha = alpha
+        self.hyst = hyst
+        self.dwell = dwell
+        self.r = r0
+        self.zone = raw_zone(r0)
+        self._count = 0
+
+    def update(self, r_val: float) -> int:
+        self.r += (float(r_val) - self.r) * self.alpha
+        z = self.zone
+        r = self.r
+        # enter a hotter zone at its threshold; leave it only hyst below it
+        up_a, up_r = R_AMBER, R_RED
+        dn_a, dn_r = R_AMBER - self.hyst, R_RED - self.hyst
+        if z == ZONE_GREEN:
+            target = ZONE_RED if r >= up_r else (ZONE_AMBER if r >= up_a else z)
+        elif z == ZONE_AMBER:
+            target = ZONE_RED if r >= up_r else (ZONE_GREEN if r < dn_a else z)
+        else:
+            target = ZONE_GREEN if r < dn_a else (ZONE_AMBER if r < dn_r else z)
+        if target == z:
+            self._count = 0
+        else:
+            self._count += 1
+            if self._count >= self.dwell:
+                self.zone, self._count = target, 0
+        return self.zone
+
+    @property
+    def led_flags(self) -> int:
+        return ZONE_LED_FLAGS[self.zone]
+
+    @property
+    def name(self) -> str:
+        return ZONE_NAMES[self.zone]
+
+
 def visible_len(s: str) -> int:
     return len(ANSI_RE.sub("", s))
 
@@ -152,7 +212,8 @@ def sparkline(
     return f"{color}{''.join(BLOCKS[i] for i in idx)}{C_RESET}"
 
 
-def render_phase_compass(psi_rad: float, r_val: float, fired: bool) -> List[str]:
+def render_phase_compass(psi_rad: float, r_val: float, fired: bool,
+                         zone: Optional[int] = None) -> List[str]:
     """Render a 7-line high-precision ASCII/Unicode polar compass with 12 PRC phase sectors."""
     ang = ((psi_rad + np.pi) % (2.0 * np.pi)) - np.pi
     sector = int(np.round((ang + np.pi) / (2.0 * np.pi) * 12.0)) % 12
@@ -165,11 +226,8 @@ def render_phase_compass(psi_rad: float, r_val: float, fired: bool) -> List[str]
         if sector in (0, 1, 11)
         else ("↓" if sector in (2, 3, 4) else ("→" if sector in (5, 6, 7) else "↑"))
     )
-    center = (
-        f"{C_GREEN}{vec_char}{C_RESET}"
-        if r_val < 0.35
-        else (f"{C_AMBER}{vec_char}{C_RESET}" if r_val < 0.55 else f"{C_RED}{vec_char}{C_RESET}")
-    )
+    zcol = (C_GREEN, C_AMBER, C_RED)[raw_zone(r_val) if zone is None else zone]
+    center = f"{zcol}{vec_char}{C_RESET}"
     return [
         f"          +π/2 {p[9]}               ",
         f"       {p[10]}        {p[8]}            ",
@@ -210,7 +268,15 @@ def run_tui(
     port: Optional[str] = None,
     baudrate: int = 2000000,
     max_frames: Optional[int] = None,
+    keys: str = "",
+    trace: bool = False,
 ) -> None:
+    """keys: scripted keypresses 'FRAME:KEY,...' (e.g. '30:r,120:space') for bounded runs."""
+    key_script: dict = {}
+    for item in filter(None, (keys or "").split(",")):
+        fr, k = item.split(":", 1)
+        kb = b" " if k.lower() == "space" else k.encode()[:1]
+        key_script.setdefault(int(fr), []).append(kb)
     from host.board import resolve_port
 
     port = resolve_port(port)
@@ -248,6 +314,7 @@ def run_tui(
     patient_brain = PatientBrain("chb01")
     dsp = DspChainRef()
 
+    zt = ZoneTracker(r0=0.85)
     raw_hist: Deque[float] = deque([0.0] * 120, maxlen=120)
     bp_hist: Deque[float] = deque([0.0] * 120, maxlen=120)
     r_hist: Deque[float] = deque([0.85] * 6, maxlen=104)
@@ -299,7 +366,7 @@ def run_tui(
     )
 
     if max_frames is None:
-        sys.stdout.write("\033[?1049h\033[H\033[2J\033[?25l")
+        sys.stdout.write("\033[?1049h\033[?7l\033[H\033[2J\033[?25l")
         sys.stdout.flush()
 
     has_msvcrt = False
@@ -351,11 +418,14 @@ def run_tui(
                             )
                         except Exception:
                             hw_live = False
+            keys_now: List[bytes] = list(key_script.get(frame_count, []))
             if has_msvcrt:
                 import msvcrt
 
                 while msvcrt.kbhit():
-                    ch = msvcrt.getch()
+                    keys_now.append(msvcrt.getch())
+            if keys_now:
+                for ch in keys_now:
                     if ch == b" ":
                         loop_on = not loop_on
                         status_str = (
@@ -419,7 +489,13 @@ def run_tui(
                 bp_out = dsp.step(s1)
                 fired = False
 
-                host_color = 0x10 if r_val < 0.35 else (0x20 if r_val < 0.55 else 0x30)
+                prev_zone = zt.zone
+                zt.update(r_val)
+                if zt.zone != prev_zone:
+                    event_log.append(
+                        f"[ZONE] {ZONE_NAMES[prev_zone]} -> {zt.name} (R~{zt.r:.2f})"
+                    )
+                host_color = zt.led_flags
                 sf = SampleFrame(
                     seq=seq,
                     sim_t_us=seq * 1000,
@@ -530,7 +606,7 @@ def run_tui(
                 raw_hist.append(s1 / 1024.0)
                 bp_hist.append(bp_out.I_q15 / 1024.0)
                 if seq % 8 == 0:
-                    r_hist.append(r_val)
+                    r_hist.append(zt.r)
 
             hw_str = (
                 f"{C_GREEN}● LIVE ESP32-S3 ({port} @ 2M){C_RESET}"
@@ -549,8 +625,10 @@ def run_tui(
                     if model_idx == 0
                     else f"{C_RED}[LOOP: OFF (ICTAL SURGE)]{C_RESET}"
                 )
-            cur_r = r_val
-            r_col = C_GREEN if cur_r < 0.35 else (C_AMBER if cur_r < 0.55 else C_RED)
+            cur_r = zt.r
+            zone = zt.zone
+            r_col = (C_GREEN, C_AMBER, C_RED)[zone]
+            zone_badge = f"{r_col}{C_BOLD}■ {zt.name}{C_RESET}"
             r_bar_len = int(np.clip(round(cur_r * 38), 0, 38))
             r_bar = f"{r_col}{'█' * r_bar_len}{C_GRAY}{'░' * (38 - r_bar_len)}{C_RESET}"
 
@@ -612,8 +690,8 @@ def run_tui(
                     cols=38,
                     rows=3,
                     color=r_col,
-                    threshold_y=0.25,
-                    tiered_colors=True,
+                    threshold_y=R_RED,
+                    tiered_colors=False,
                 )
                 snn_strip_c = render_snn_raster(
                     bp_out.env_q15, bp_out.phase_q15, seq, width=22
@@ -637,11 +715,7 @@ def run_tui(
                         else ("→" if sec in (5, 6, 7) else "↑")
                     )
                 )
-                center_c = (
-                    f"{C_GREEN}{vec_char}{C_RESET}"
-                    if cur_r < 0.35
-                    else (f"{C_AMBER}{vec_char}{C_RESET}" if cur_r < 0.55 else f"{C_RED}{vec_char}{C_RESET}")
-                )
+                center_c = f"{r_col}{vec_char}{C_RESET}"
                 compass_c = [
                     f"      +π/2 {pt[9]}",
                     f"   {pt[10]}        {pt[8]}",
@@ -750,6 +824,13 @@ def run_tui(
                     ),
                     bot_b,
                     pad_ansi(
+                        f" {C_BOLD}PAT{C_RESET} {patient_ids[pat_idx].upper() if model_idx == 0 else pat_name[:8]} "
+                        f"| {C_BOLD}LOOP{C_RESET} {(C_GREEN + 'ON ') if loop_on else (C_RED + 'OFF')}{C_RESET} "
+                        f"| {C_BOLD}R{C_RESET} {r_col}{cur_r:0.3f}{C_RESET} | {C_BOLD}ZONE{C_RESET} {zone_badge} "
+                        f"| {C_GREEN}<.35{C_RESET} {C_AMBER}.35-.55{C_RESET} {C_RED}>=.55{C_RESET}",
+                        78,
+                    ),
+                    pad_ansi(
                         f" {C_BOLD}KEYS:{C_RESET} {C_CYAN}[SPACE]{C_RESET} Loop │ {C_CYAN}[P]{C_RESET} Pat │ {C_CYAN}[R]{C_RESET} Onset │ {C_CYAN}[M]{C_RESET} Arm │ {C_CYAN}[1/2/3]{C_RESET} Model │ {C_CYAN}[Q]{C_RESET} Quit",
                         78,
                     ),
@@ -758,7 +839,7 @@ def run_tui(
                 # =========================================================
                 # EXPANDED WIDESCREEN LAYOUT (>= 105 cols, >= 28 lines)
                 # =========================================================
-                compass = render_phase_compass(psi_val, cur_r, fired_this_batch)
+                compass = render_phase_compass(psi_val, cur_r, fired_this_batch, zone)
                 braille_r = render_braille_plot(
                     list(r_hist),
                     0.0,
@@ -766,8 +847,8 @@ def run_tui(
                     cols=52,
                     rows=3,
                     color=r_col,
-                    threshold_y=0.25,
-                    tiered_colors=True,
+                    threshold_y=R_RED,
+                    tiered_colors=False,
                 )
                 snn_strip = render_snn_raster(
                     bp_out.env_q15, bp_out.phase_q15, seq, width=35
@@ -915,8 +996,11 @@ def run_tui(
                     )
                 )
 
+            if trace:
+                print(f"frame={frame_count:4d} loop={'ON ' if loop_on else 'OFF'} "
+                      f"R_raw={r_val:.3f} R_smooth={zt.r:.3f} zone={zt.name} led=0x{zt.led_flags:02X}")
             if max_frames is None:
-                sys.stdout.write("\033[H" + "\n".join(rows) + "\033[J")
+                sys.stdout.write("\033[?2026h\033[?7l\033[H" + "\033[K\n".join(rows) + "\033[K\033[J\033[?2026l")
                 sys.stdout.flush()
                 time.sleep(0.045)
             else:
@@ -925,7 +1009,7 @@ def run_tui(
                     break
     finally:
         if max_frames is None:
-            sys.stdout.write("\033[?1049l\033[?25h\n")
+            sys.stdout.write("\033[?7h\033[?1049l\033[?25h\n")
             sys.stdout.flush()
         if ser is not None and ser.is_open:
             try:
@@ -946,5 +1030,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--frames", type=int, default=None, help="Run N batches and print TUI snapshot"
     )
+    parser.add_argument("--keys", type=str, default="", help="Scripted keys 'FRAME:KEY,...'")
+    parser.add_argument("--trace", action="store_true", help="Print per-frame R/zone trace")
     args = parser.parse_args()
-    run_tui(port=args.port, max_frames=args.frames)
+    run_tui(port=args.port, max_frames=args.frames, keys=args.keys, trace=args.trace)
