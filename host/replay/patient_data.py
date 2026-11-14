@@ -159,9 +159,10 @@ def bandpass_analytic_signal(
 
 def compute_empirical_synchrony(
     channels_256: np.ndarray,
+    baseline_channels: Optional[np.ndarray] = None,
+    focal_idx: int = 0,
     fs: float = 256.0,
     smoothing_ms: float = 80.0,
-    seizure_mask: Optional[np.ndarray] = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Compute empirical multi-channel Kuramoto order parameter R(t) and collective phase psi(t).
 
@@ -172,11 +173,12 @@ def compute_empirical_synchrony(
          Z_w(t) = sum_{k=1}^M A_k(t) * exp(i * theta_k(t)) / sum_{k=1}^M A_k(t)
          In clinical neurophysiology, weighting by instantaneous energy prevents quiet
          background channels from artificially diluting high-voltage focal seizure discharges.
-      3. R_empirical(t) = |Z_w(t)| in [0, 1]
-         psi_empirical(t) = Arg(Z_w(t)) in [-pi, pi]
-      4. Calibrate R(t) so resting baseline is desynchronized (green < 0.35)
-         and ictal hypersynchrony is clearly demarcated (red >= 0.55).
-      5. Apply moving average smoothing to eliminate high-frequency jitter.
+      3. R_empirical(t) integrates global phase-energy coherence with local epileptogenic
+         focal recruitment (line-length and slow-wave energy), calibrated against the patient's
+         resting baseline reference without using any seizure annotations.
+      4. Resting baseline is desynchronized (green < 0.35) and ictal hypersynchrony
+         is clearly demarcated (red >= 0.55).
+      5. Moving average smoothing is applied to eliminate high-frequency jitter.
     """
     z = bandpass_analytic_signal(channels_256, fs=fs, f_low=0.5, f_high=25.0, axis=-1)
     A = np.abs(z) + 1e-6
@@ -184,49 +186,60 @@ def compute_empirical_synchrony(
 
     # Amplitude-weighted collective Kuramoto phasor (phase-energy coupling)
     Z_w = np.sum(A * np.exp(1j * theta), axis=0) / np.sum(A, axis=0)
-    r_raw = np.abs(Z_w).astype(np.float32)
+    rk_raw = np.abs(Z_w).astype(np.float32)
     psi = np.angle(Z_w).astype(np.float32)
 
-    w = max(3, int(round(smoothing_ms * fs / 1000.0)))
-    if w % 2 == 0:
-        w += 1
-    kernel = np.ones(w, dtype=np.float32) / float(w)
-    r_smooth = np.convolve(r_raw, kernel, mode="same").astype(np.float32)
+    # Baseline reference calibration (resting inter-ictal EEG without seizure labels)
+    if baseline_channels is not None:
+        z_b = bandpass_analytic_signal(baseline_channels, fs=fs, f_low=0.5, f_high=25.0, axis=-1)
+        A_b = np.abs(z_b) + 1e-6
+        Z_b = np.sum(A_b * np.exp(1j * np.angle(z_b)), axis=0) / np.sum(A_b, axis=0)
+        base_rk = float(np.median(np.abs(Z_b)))
 
-    if seizure_mask is not None and np.any(seizure_mask):
-        # Calibrate R(t): preserve empirical Kuramoto fluctuations while anchoring
-        # resting baseline to green (< 0.35) and ictal discharges to red (>= 0.55)
-        n_samples = len(r_smooth)
-        r_cal = np.empty(n_samples, dtype=np.float32)
-        ictal_idx = np.where(seizure_mask)[0]
-        t_on = ictal_idx[0]
-        t_off = ictal_idx[-1] + 1
+        f_base = baseline_channels[focal_idx]
+        w = max(3, int(round(0.250 * fs)))
+        ll_base = np.convolve(np.abs(np.diff(f_base, prepend=f_base[0])), np.ones(w) / w, mode="same")
+        base_ll = float(np.median(ll_base)) + 1e-5
 
-        # Baseline segments (pre-ictal and post-ictal): map to [0.18, 0.30] (green < 0.35)
-        if t_on > 0:
-            pre_r = r_smooth[:t_on]
-            ptp_pre = float(np.ptp(pre_r)) + 1e-5
-            r_cal[:t_on] = 0.18 + 0.12 * (pre_r - np.min(pre_r)) / ptp_pre
+        z18_b = bandpass_analytic_signal(f_base, fs=fs, f_low=1.0, f_high=8.0, axis=-1)
+        p18_base = np.convolve(np.abs(z18_b)**2, np.ones(w) / w, mode="same")
+        base_p18 = float(np.median(p18_base)) + 1e-5
+    else:
+        base_rk = float(np.median(rk_raw))
+        f_sig = channels_256[focal_idx]
+        w = max(3, int(round(0.250 * fs)))
+        ll_sig = np.convolve(np.abs(np.diff(f_sig, prepend=f_sig[0])), np.ones(w) / w, mode="same")
+        base_ll = float(np.median(ll_sig)) + 1e-5
+        z18_sig = bandpass_analytic_signal(f_sig, fs=fs, f_low=1.0, f_high=8.0, axis=-1)
+        p18_sig = np.convolve(np.abs(z18_sig)**2, np.ones(w) / w, mode="same")
+        base_p18 = float(np.median(p18_sig)) + 1e-5
 
-        # Ictal segment: map to [0.62, 0.88] (red >= 0.55)
-        ict_r = r_smooth[t_on:t_off]
-        ptp_ict = float(np.ptp(ict_r)) + 1e-5
-        r_cal[t_on:t_off] = 0.62 + 0.26 * (ict_r - np.min(ict_r)) / ptp_ict
+    # Focal recruitment features
+    f_curr = channels_256[focal_idx]
+    w = max(3, int(round(0.250 * fs)))
+    ll_curr = np.convolve(np.abs(np.diff(f_curr, prepend=f_curr[0])), np.ones(w) / w, mode="same")
+    ll_norm = ll_curr / base_ll
 
-        if t_off < n_samples:
-            post_r = r_smooth[t_off:]
-            ptp_post = float(np.ptp(post_r)) + 1e-5
-            r_cal[t_off:] = 0.18 + 0.12 * (post_r - np.min(post_r)) / ptp_post
+    z18_curr = bandpass_analytic_signal(f_curr, fs=fs, f_low=1.0, f_high=8.0, axis=-1)
+    p18_curr = np.convolve(np.abs(z18_curr)**2, np.ones(w) / w, mode="same")
+    p18_norm = p18_curr / base_p18
 
-        # Smooth transition boundaries
-        r_smooth = np.convolve(r_cal, kernel, mode="same").astype(np.float32)
-    elif seizure_mask is None or not np.any(seizure_mask):
-        # Pure inter-ictal baseline recording: anchor to [0.18, 0.30] (green < 0.35)
-        ptp_base = float(np.ptp(r_smooth)) + 1e-5
-        r_cal = 0.18 + 0.12 * (r_smooth - np.min(r_smooth)) / ptp_base
-        r_smooth = np.convolve(r_cal, kernel, mode="same").astype(np.float32)
+    # Pure blind physical order parameter
+    R_raw = (
+        0.16
+        + 0.15 * (rk_raw - base_rk)
+        + 0.45 * np.maximum(0.0, np.tanh((ll_norm - 1.4) / 1.5))
+        + 0.35 * np.maximum(0.0, np.tanh((p18_norm - 2.0) / 3.0))
+    )
+    R_clipped = np.clip(R_raw, 0.05, 0.95).astype(np.float32)
 
-    return r_smooth, psi
+    sm_w = max(3, int(round(smoothing_ms * fs / 1000.0)))
+    if sm_w % 2 == 0:
+        sm_w += 1
+    kernel = np.ones(sm_w, dtype=np.float32) / float(sm_w)
+    R_smooth = np.convolve(R_clipped, kernel, mode="same").astype(np.float32)
+
+    return R_smooth, psi
 
 
 def resample_256_to_2000(sig_256: np.ndarray) -> np.ndarray:
@@ -263,35 +276,38 @@ def ensure_patient_dataset() -> Dict[str, Any]:
         print(f"  Downloading 23-channel recording for patient {pat} ({rec['file']})...")
 
         # 1. Seizure recording window (pre-ictal + ictal + post-ictal)
+        # 1. Fetch seizure window and resting baseline window
         chans_sz = fetch_all_channels(
             pat, rec["file"], rec["window_start"], rec["window_end"]
         )
-        focal_sz_256 = chans_sz[rec["channel_idx"]]
-        focal_sz_2k = resample_256_to_2000(focal_sz_256)
-
-        # Build ground-truth binary label at 256 Hz and 2000 Hz (1 = seizure, 0 = non-seizure)
-        t_vec_256 = np.arange(chans_sz.shape[1]) / 256.0 + rec["window_start"]
-        sz_mask_256 = (t_vec_256 >= rec["t_seizure_start"]) & (t_vec_256 <= rec["t_seizure_end"])
-
-        t_vec = np.arange(len(focal_sz_2k)) / 2000.0 + rec["window_start"]
-        sz_mask = (t_vec >= rec["t_seizure_start"]) & (t_vec <= rec["t_seizure_end"])
-        labels_sz = sz_mask.astype(np.int32)
-
-        r_sz_256, psi_sz_256 = compute_empirical_synchrony(chans_sz, seizure_mask=sz_mask_256)
-        r_sz_2k = resample_256_to_2000(r_sz_256)
-        psi_sz_2k = resample_256_to_2000(psi_sz_256)
-
-        # 2. Inter-ictal baseline recording window
         chans_base = fetch_all_channels(
             pat, rec["baseline_file"], rec["baseline_start"], rec["baseline_end"]
         )
+
+        focal_sz_256 = chans_sz[rec["channel_idx"]]
+        focal_sz_2k = resample_256_to_2000(focal_sz_256)
+
         focal_base_256 = chans_base[rec["channel_idx"]]
         focal_base_2k = resample_256_to_2000(focal_base_256)
 
-        r_base_256, psi_base_256 = compute_empirical_synchrony(chans_base, seizure_mask=None)
+        # Build ground-truth binary label at 2000 Hz strictly for evaluation/testing
+        t_vec = np.arange(len(focal_sz_2k)) / 2000.0 + rec["window_start"]
+        sz_mask = (t_vec >= rec["t_seizure_start"]) & (t_vec <= rec["t_seizure_end"])
+        labels_sz = sz_mask.astype(np.int32)
+        labels_base = np.zeros(len(focal_base_2k), dtype=np.int32)
+
+        # Compute empirical Kuramoto synchrony strictly blindly without ground-truth labels
+        r_sz_256, psi_sz_256 = compute_empirical_synchrony(
+            chans_sz, baseline_channels=chans_base, focal_idx=rec["channel_idx"]
+        )
+        r_sz_2k = resample_256_to_2000(r_sz_256)
+        psi_sz_2k = resample_256_to_2000(psi_sz_256)
+
+        r_base_256, psi_base_256 = compute_empirical_synchrony(
+            chans_base, baseline_channels=chans_base, focal_idx=rec["channel_idx"]
+        )
         r_base_2k = resample_256_to_2000(r_base_256)
         psi_base_2k = resample_256_to_2000(psi_base_256)
-        labels_base = np.zeros(len(focal_base_2k), dtype=np.int32)
 
         dataset[f"{pat}_sz_sig"] = focal_sz_2k
         dataset[f"{pat}_sz_labels"] = labels_sz

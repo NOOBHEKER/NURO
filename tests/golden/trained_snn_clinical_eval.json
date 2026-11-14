@@ -7,9 +7,9 @@
   "test_patient": "chb03",
   "held_out_generalisation": true,
   "n_test_blocks": 60500,
-  "auroc": 0.8312,
-  "sensitivity": 0.8289,
-  "specificity": 0.7861,
-  "mean_ictal_spikes": 6.63,
-  "mean_baseline_spikes": 1.71
+  "auroc": 0.844,
+  "sensitivity": 0.8026,
+  "specificity": 0.8176,
+  "mean_ictal_spikes": 6.38,
+  "mean_baseline_spikes": 1.49
 }

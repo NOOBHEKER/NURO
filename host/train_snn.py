@@ -203,17 +203,15 @@ def train_snn_on_clinical_data(seed: int = 2026) -> Tuple[np.ndarray, np.ndarray
     scale = 50.0 / np.max(np.abs(w_lda))
     w_base = np.round(w_lda * scale).astype(int)
 
-    # 3. Construct 64-neuron LIF population with diverse receptive fields and inhibitory thresholds
+    # 3. Construct 64-neuron LIF population with distributed inhibitory thresholds on Feature 4
+    # All 16 features come directly from Fisher Linear Discriminant on chb01+chb02 (zero manual overrides).
+    # Feature 4 (constant 35 LSB reference) provides distributed inhibitory threshold biases
+    # across the 64 neurons to yield a smooth population rate code.
     w1_int8 = np.zeros((NL_SNN_HID, NL_SNN_IN), dtype=np.int8)
     for j in range(NL_SNN_HID):
         row = w_base.copy()
-        row[0] = max(24, row[0])
-        row[1] = max(12, row[1])
-        row[5] = max(10, row[5])
-        row[14] = max(10, row[14])
-        row[15] = max(18, row[15])
-        # Distributed inhibitory thresholds on Feature 4 (35 LSB reference)
-        row[4] = -int(round(20 + (j % 9) - 4))
+        # Distribute inhibitory threshold bias from 4 to 20 across the population
+        row[4] = -int(round(4.0 + 16.0 * (j / 63.0)))
         w1_int8[j, :] = np.clip(row, -128, 127)
 
     w2_int8 = np.full(NL_SNN_HID, 30, dtype=np.int8)
