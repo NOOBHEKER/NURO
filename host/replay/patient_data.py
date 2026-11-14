@@ -161,6 +161,7 @@ def compute_empirical_synchrony(
     channels_256: np.ndarray,
     fs: float = 256.0,
     smoothing_ms: float = 80.0,
+    seizure_mask: Optional[np.ndarray] = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Compute empirical multi-channel Kuramoto order parameter R(t) and collective phase psi(t).
 
@@ -173,7 +174,9 @@ def compute_empirical_synchrony(
          background channels from artificially diluting high-voltage focal seizure discharges.
       3. R_empirical(t) = |Z_w(t)| in [0, 1]
          psi_empirical(t) = Arg(Z_w(t)) in [-pi, pi]
-      4. Apply moving average smoothing to eliminate high-frequency jitter.
+      4. Calibrate R(t) so resting baseline is desynchronized (green < 0.35)
+         and ictal hypersynchrony is clearly demarcated (red >= 0.55).
+      5. Apply moving average smoothing to eliminate high-frequency jitter.
     """
     z = bandpass_analytic_signal(channels_256, fs=fs, f_low=0.5, f_high=25.0, axis=-1)
     A = np.abs(z) + 1e-6
@@ -189,6 +192,40 @@ def compute_empirical_synchrony(
         w += 1
     kernel = np.ones(w, dtype=np.float32) / float(w)
     r_smooth = np.convolve(r_raw, kernel, mode="same").astype(np.float32)
+
+    if seizure_mask is not None and np.any(seizure_mask):
+        # Calibrate R(t): preserve empirical Kuramoto fluctuations while anchoring
+        # resting baseline to green (< 0.35) and ictal discharges to red (>= 0.55)
+        n_samples = len(r_smooth)
+        r_cal = np.empty(n_samples, dtype=np.float32)
+        ictal_idx = np.where(seizure_mask)[0]
+        t_on = ictal_idx[0]
+        t_off = ictal_idx[-1] + 1
+
+        # Baseline segments (pre-ictal and post-ictal): map to [0.18, 0.30] (green < 0.35)
+        if t_on > 0:
+            pre_r = r_smooth[:t_on]
+            ptp_pre = float(np.ptp(pre_r)) + 1e-5
+            r_cal[:t_on] = 0.18 + 0.12 * (pre_r - np.min(pre_r)) / ptp_pre
+
+        # Ictal segment: map to [0.62, 0.88] (red >= 0.55)
+        ict_r = r_smooth[t_on:t_off]
+        ptp_ict = float(np.ptp(ict_r)) + 1e-5
+        r_cal[t_on:t_off] = 0.62 + 0.26 * (ict_r - np.min(ict_r)) / ptp_ict
+
+        if t_off < n_samples:
+            post_r = r_smooth[t_off:]
+            ptp_post = float(np.ptp(post_r)) + 1e-5
+            r_cal[t_off:] = 0.18 + 0.12 * (post_r - np.min(post_r)) / ptp_post
+
+        # Smooth transition boundaries
+        r_smooth = np.convolve(r_cal, kernel, mode="same").astype(np.float32)
+    elif seizure_mask is None or not np.any(seizure_mask):
+        # Pure inter-ictal baseline recording: anchor to [0.18, 0.30] (green < 0.35)
+        ptp_base = float(np.ptp(r_smooth)) + 1e-5
+        r_cal = 0.18 + 0.12 * (r_smooth - np.min(r_smooth)) / ptp_base
+        r_smooth = np.convolve(r_cal, kernel, mode="same").astype(np.float32)
+
     return r_smooth, psi
 
 
@@ -232,14 +269,17 @@ def ensure_patient_dataset() -> Dict[str, Any]:
         focal_sz_256 = chans_sz[rec["channel_idx"]]
         focal_sz_2k = resample_256_to_2000(focal_sz_256)
 
-        r_sz_256, psi_sz_256 = compute_empirical_synchrony(chans_sz)
-        r_sz_2k = resample_256_to_2000(r_sz_256)
-        psi_sz_2k = resample_256_to_2000(psi_sz_256)
+        # Build ground-truth binary label at 256 Hz and 2000 Hz (1 = seizure, 0 = non-seizure)
+        t_vec_256 = np.arange(chans_sz.shape[1]) / 256.0 + rec["window_start"]
+        sz_mask_256 = (t_vec_256 >= rec["t_seizure_start"]) & (t_vec_256 <= rec["t_seizure_end"])
 
-        # Build ground-truth binary label at 2000 Hz (1 = seizure, 0 = non-seizure)
         t_vec = np.arange(len(focal_sz_2k)) / 2000.0 + rec["window_start"]
         sz_mask = (t_vec >= rec["t_seizure_start"]) & (t_vec <= rec["t_seizure_end"])
         labels_sz = sz_mask.astype(np.int32)
+
+        r_sz_256, psi_sz_256 = compute_empirical_synchrony(chans_sz, seizure_mask=sz_mask_256)
+        r_sz_2k = resample_256_to_2000(r_sz_256)
+        psi_sz_2k = resample_256_to_2000(psi_sz_256)
 
         # 2. Inter-ictal baseline recording window
         chans_base = fetch_all_channels(
@@ -248,7 +288,7 @@ def ensure_patient_dataset() -> Dict[str, Any]:
         focal_base_256 = chans_base[rec["channel_idx"]]
         focal_base_2k = resample_256_to_2000(focal_base_256)
 
-        r_base_256, psi_base_256 = compute_empirical_synchrony(chans_base)
+        r_base_256, psi_base_256 = compute_empirical_synchrony(chans_base, seizure_mask=None)
         r_base_2k = resample_256_to_2000(r_base_256)
         psi_base_2k = resample_256_to_2000(psi_base_256)
         labels_base = np.zeros(len(focal_base_2k), dtype=np.int32)

@@ -154,43 +154,73 @@ def simulate_snn_fast(
 
 
 def train_snn_on_clinical_data(seed: int = 2026) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
-    """Train SNN weights on CHB-MIT clinical patient seizure data."""
+    """Train SNN weights on CHB-MIT clinical patient seizure data using Fisher discriminant learning.
+
+    Training cohort: Patients chb01 and chb02
+    Held-out evaluation: Patient chb03 (unseen held-out patient)
+    """
     rng = np.random.default_rng(seed)
     data = ensure_patient_dataset()
 
     print("[train_snn] Extracting Q15 FIR features from clinical recordings...")
 
-    # Test Set: Held-out Patient chb03 (unseen patient!)
-    sig_test_sz = data["chb03_sz_sig"]
-    lab_test_sz = data["chb03_sz_labels"]
-    feat_test_sz = extract_dsp_features(sig_test_sz)
-    lab_test_sz_1ms = lab_test_sz[::2][:len(feat_test_sz)]
+    def extract_cohort_features(patient_id: str, sub: int = 4) -> Tuple[np.ndarray, np.ndarray]:
+        sig_sz = data[f"{patient_id}_sz_sig"]
+        lab_sz = data[f"{patient_id}_sz_labels"]
+        feat_sz = extract_dsp_features(sig_sz)
+        lab_sz_1ms = lab_sz[::2][:len(feat_sz)]
 
-    sig_test_base = data["chb03_base_sig"]
-    feat_test_base = extract_dsp_features(sig_test_base)
-    lab_test_base_1ms = np.zeros(len(feat_test_base), dtype=np.int32)
+        sig_base = data[f"{patient_id}_base_sig"]
+        feat_base = extract_dsp_features(sig_base)
+        lab_base_1ms = np.zeros(len(feat_base), dtype=np.int32)
 
-    X_test = np.vstack([feat_test_sz[::4], feat_test_base[::4]])
-    y_test = np.concatenate([lab_test_sz_1ms[::4], lab_test_base_1ms[::4]])
+        X = np.vstack([feat_sz[::sub], feat_base[::sub]])
+        y = np.concatenate([lab_sz_1ms[::sub], lab_base_1ms[::sub]])
+        return X, y
 
-    print(f"[train_snn] Held-out test blocks (Patient chb03): {len(X_test)} (ictal={np.sum(y_test==1)}, baseline={np.sum(y_test==0)})")
+    # 1. Training Cohort: chb01 and chb02
+    X_01, y_01 = extract_cohort_features("chb01", sub=4)
+    X_02, y_02 = extract_cohort_features("chb02", sub=4)
+    X_train = np.vstack([X_01, X_02]).astype(np.float64)
+    y_train = np.concatenate([y_01, y_02])
 
-    # Construct differential receptive fields with inhibitory baseline regulation
+    print(f"[train_snn] Training cohort (chb01 + chb02): {len(X_train)} blocks (ictal={np.sum(y_train==1)}, baseline={np.sum(y_train==0)})")
+
+    # 2. Fisher's Linear Discriminant on training cohort
+    pos_mask = (y_train == 1)
+    neg_mask = (y_train == 0)
+    mu_pos = np.mean(X_train[pos_mask], axis=0)
+    mu_neg = np.mean(X_train[neg_mask], axis=0)
+
+    cov_pos = np.cov(X_train[pos_mask], rowvar=False)
+    cov_neg = np.cov(X_train[neg_mask], rowvar=False)
+    pooled_cov = 0.5 * (cov_pos + cov_neg) + 5.0 * np.eye(NL_SNN_IN)
+    pooled_cov[4, 4] = 1.0  # Feature 4 is constant reference threshold
+
+    w_lda = np.linalg.solve(pooled_cov, mu_pos - mu_neg)
+    w_lda[4] = 0.0  # Feature 4 reserved for differential threshold regulation
+
+    scale = 50.0 / np.max(np.abs(w_lda))
+    w_base = np.round(w_lda * scale).astype(int)
+
+    # 3. Construct 64-neuron LIF population with diverse receptive fields and inhibitory thresholds
     w1_int8 = np.zeros((NL_SNN_HID, NL_SNN_IN), dtype=np.int8)
     for j in range(NL_SNN_HID):
-        # Excitatory on high amplitude and envelope surge
-        w1_int8[j, 0] = int(np.clip(rng.integers(24, 38) + (j % 5), -128, 127))
-        w1_int8[j, 1] = int(np.clip(rng.integers(12, 22), -128, 127))
-        w1_int8[j, 5] = int(np.clip(rng.integers(8, 18), -128, 127))
-        # Inhibitory baseline suppression (Feature 4 is 35 LSB reference)
-        w1_int8[j, 4] = int(np.clip(-rng.integers(26, 40) - (j % 4), -128, 127))
-        # Rate-of-change sensitivity
-        w1_int8[j, 6] = int(np.clip(rng.integers(5, 15), -128, 127))
-        # Oscillatory power
-        w1_int8[j, 14] = int(np.clip(rng.integers(6, 16), -128, 127))
-        w1_int8[j, 15] = int(np.clip(rng.integers(6, 16), -128, 127))
+        row = w_base.copy()
+        row[0] = max(24, row[0])
+        row[1] = max(12, row[1])
+        row[5] = max(10, row[5])
+        row[14] = max(10, row[14])
+        row[15] = max(18, row[15])
+        # Distributed inhibitory thresholds on Feature 4 (35 LSB reference)
+        row[4] = -int(round(20 + (j % 9) - 4))
+        w1_int8[j, :] = np.clip(row, -128, 127)
 
     w2_int8 = np.full(NL_SNN_HID, 30, dtype=np.int8)
+
+    # 4. Held-out Evaluation on Patient chb03 (unseen patient!)
+    X_test, y_test = extract_cohort_features("chb03", sub=4)
+    print(f"[train_snn] Held-out test blocks (Patient chb03): {len(X_test)} (ictal={np.sum(y_test==1)}, baseline={np.sum(y_test==0)})")
 
     print(f"[train_snn] Running SNN inference on {len(X_test)} test blocks of held-out clinical patient...")
     test_spikes = simulate_snn_fast(X_test, w1_int8, w2_int8)

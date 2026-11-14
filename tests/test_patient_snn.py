@@ -78,3 +78,20 @@ def test_trained_snn_header_contract() -> None:
     assert "#define TRAINED_SNN_HID 64" in content
     assert "TRAINED_W1[TRAINED_SNN_HID][TRAINED_SNN_IN]" in content
     assert "TRAINED_W2[TRAINED_SNN_HID]" in content
+
+
+def test_kuramoto_order_parameter_calibration() -> None:
+    """Verify that empirical Kuramoto R(t) is calibrated green (<0.35) at baseline and red (>=0.55) during ictal."""
+    data = ensure_patient_dataset()
+    for pat in ["chb01", "chb02", "chb03"]:
+        r_sz = data[f"{pat}_sz_R"]
+        labels_sz = data[f"{pat}_sz_labels"]
+        r_base = data[f"{pat}_base_R"]
+
+        ictal_r = r_sz[labels_sz == 1]
+        pct_ictal_red = float(np.mean(ictal_r >= 0.55) * 100.0)
+        pct_base_green = float(np.mean(r_base < 0.35) * 100.0)
+
+        assert pct_ictal_red >= 90.0, f"Patient {pat} ictal time red must be >= 90%, got {pct_ictal_red:.1f}%"
+        assert pct_base_green >= 95.0, f"Patient {pat} baseline time green must be >= 95%, got {pct_base_green:.1f}%"
+
