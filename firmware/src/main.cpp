@@ -31,6 +31,159 @@
 
 static nl_dsp_state_t g_dsp;
 static nl_snn_state_t g_snn;
+
+/* Causal multi-timescale 16-feature clinical front-end (zero dead-zone fixed-point accumulators)
+ * Bit-exact to Colab QAT-BPTT training pipeline and host/train_snn.py.
+ */
+typedef struct {
+    int16_t  prev_s;
+    int32_t  dc_acc;       /* Q10 0.31 Hz DC tracker */
+    int32_t  lp_acc;       /* Q6  5.0 Hz low-pass tracker */
+    int64_t  ll_fast_acc;  /* 64 ms Line-Length EMA */
+    int64_t  ll_med_acc;   /* 512 ms Line-Length EMA */
+    int64_t  ll_slow_acc;  /* 32.8 s robust clipped baseline EMA */
+    int64_t  sw_fast_acc;  /* 128 ms 0.3-5 Hz Slow-Wave EMA */
+    int64_t  sw_med_acc;   /* 512 ms Slow-Wave EMA */
+    int64_t  sw_slow_acc;  /* 32.8 s robust clipped baseline EMA */
+    int64_t  env_med_acc;  /* 256 ms 13-30 Hz Beta EMA */
+    int64_t  env_slow_acc; /* 32.8 s robust clipped baseline EMA */
+    int64_t  tk_med_acc;   /* 256 ms Teager-Kaiser Energy EMA */
+    int64_t  tk_slow_acc;  /* 32.8 s robust clipped baseline EMA */
+    uint32_t blocks;
+} nl_feat_state_t;
+
+static nl_feat_state_t g_feat;
+
+static inline int8_t nl_clamp_i8(int32_t v) {
+    if (v > 127) return 127;
+    if (v < -128) return -128;
+    return (int8_t)v;
+}
+
+static inline int8_t nl_clamp_u7(int32_t v) {
+    if (v > 127) return 127;
+    if (v < 0) return 0;
+    return (int8_t)v;
+}
+
+static void nl_feat_reset(nl_feat_state_t *fs) {
+    memset(fs, 0, sizeof(*fs));
+}
+
+static void nl_extract_features_block(
+    nl_feat_state_t *fs,
+    int16_t s0,
+    int16_t s1,
+    const nl_dsp_out_t *dsp_out1,
+    int8_t out_f[NL_SNN_IN]
+) {
+    if (!dsp_out1->blanked) {
+        /* 2000 Hz 1-pole DC (0.31 Hz) & low-pass (5.0 Hz) cascade */
+        fs->dc_acc += (int32_t)s0 - (fs->dc_acc >> 10);
+        fs->lp_acc += (int32_t)s0 - (fs->lp_acc >> 6);
+        fs->dc_acc += (int32_t)s1 - (fs->dc_acc >> 10);
+        fs->lp_acc += (int32_t)s1 - (fs->lp_acc >> 6);
+
+        int32_t d0 = (int32_t)s0 - (int32_t)fs->prev_s; if (d0 < 0) d0 = -d0;
+        int32_t d1 = (int32_t)s1 - (int32_t)s0;         if (d1 < 0) d1 = -d1;
+        int32_t ll_val = d0 + d1;
+        if (ll_val > 32767) ll_val = 32767;
+
+        int32_t sw_val = (fs->lp_acc >> 6) - (fs->dc_acc >> 10);
+        if (sw_val < 0) sw_val = -sw_val;
+        if (sw_val > 32767) sw_val = 32767;
+
+        int32_t a = fs->prev_s >> 3, m = s0 >> 3, c = s1 >> 3;
+        int32_t tk_val = m * m - a * c;
+        if (tk_val < 0) tk_val = -tk_val;
+        if (tk_val > 32767) tk_val = 32767;
+
+        int32_t env_val = (int32_t)dsp_out1->env_q15;
+        fs->prev_s = s1;
+
+        if (fs->blocks == 0U) {
+            int64_t ll0  = (ll_val  > 4 ? ll_val  : 4);
+            int64_t sw0  = (sw_val  > 8 ? sw_val  : 8);
+            int64_t env0 = (env_val > 8 ? env_val : 8);
+            int64_t tk0  = (tk_val  > 4 ? tk_val  : 4);
+            fs->ll_fast_acc  = ll0  << 6;  fs->ll_med_acc  = ll0  << 9;  fs->ll_slow_acc  = ll0  << 15;
+            fs->sw_fast_acc  = sw0  << 7;  fs->sw_med_acc  = sw0  << 9;  fs->sw_slow_acc  = sw0  << 15;
+            fs->env_med_acc  = env0 << 8;  fs->env_slow_acc = env0 << 15;
+            fs->tk_med_acc   = tk0  << 8;  fs->tk_slow_acc  = tk0  << 15;
+        } else {
+            fs->ll_fast_acc += ll_val  - (fs->ll_fast_acc >> 6);
+            fs->ll_med_acc  += ll_val  - (fs->ll_med_acc  >> 9);
+            fs->sw_fast_acc += sw_val  - (fs->sw_fast_acc >> 7);
+            fs->sw_med_acc  += sw_val  - (fs->sw_med_acc  >> 9);
+            fs->env_med_acc += env_val - (fs->env_med_acc >> 8);
+            fs->tk_med_acc  += tk_val  - (fs->tk_med_acc  >> 8);
+
+            int32_t ll_m  = (int32_t)(fs->ll_med_acc  >> 9);
+            int32_t sw_m  = (int32_t)(fs->sw_med_acc  >> 9);
+            int32_t env_m = (int32_t)(fs->env_med_acc >> 8);
+            int32_t tk_m  = (int32_t)(fs->tk_med_acc  >> 8);
+
+            int32_t ll_s  = (int32_t)(fs->ll_slow_acc  >> 15);
+            int32_t sw_s  = (int32_t)(fs->sw_slow_acc  >> 15);
+            int32_t env_s = (int32_t)(fs->env_slow_acc >> 15);
+            int32_t tk_s  = (int32_t)(fs->tk_slow_acc  >> 15);
+
+            if (fs->blocks < 3000U) {
+                fs->ll_slow_acc  += ((int64_t)(ll_m  - ll_s))  << 6;
+                fs->sw_slow_acc  += ((int64_t)(sw_m  - sw_s))  << 6;
+                fs->env_slow_acc += ((int64_t)(env_m - env_s)) << 6;
+                fs->tk_slow_acc  += ((int64_t)(tk_m  - tk_s))  << 6;
+            } else {
+                int32_t ll_c  = (ll_m  > (ll_s  + (ll_s  >> 1))) ? (ll_s  + (ll_s  >> 1)) : ll_m;
+                int32_t sw_c  = (sw_m  > (sw_s  + (sw_s  >> 1))) ? (sw_s  + (sw_s  >> 1)) : sw_m;
+                int32_t env_c = (env_m > (env_s + (env_s >> 1))) ? (env_s + (env_s >> 1)) : env_m;
+                int32_t tk_c  = (tk_m  > (tk_s  + (tk_s  >> 1))) ? (tk_s  + (tk_s  >> 1)) : tk_m;
+                fs->ll_slow_acc  += (int64_t)ll_c  - ll_s;
+                fs->sw_slow_acc  += (int64_t)sw_c  - sw_s;
+                fs->env_slow_acc += (int64_t)env_c - env_s;
+                fs->tk_slow_acc  += (int64_t)tk_c  - tk_s;
+            }
+        }
+        fs->blocks++;
+    }
+
+    int32_t ll_f  = (int32_t)(fs->ll_fast_acc  >> 6);
+    int32_t ll_m  = (int32_t)(fs->ll_med_acc   >> 9);
+    int32_t ll_s  = (int32_t)(fs->ll_slow_acc  >> 15);
+    int32_t sw_f  = (int32_t)(fs->sw_fast_acc  >> 7);
+    int32_t sw_m  = (int32_t)(fs->sw_med_acc   >> 9);
+    int32_t sw_s  = (int32_t)(fs->sw_slow_acc  >> 15);
+    int32_t env_m = (int32_t)(fs->env_med_acc  >> 8);
+    int32_t env_s = (int32_t)(fs->env_slow_acc >> 15);
+    int32_t tk_m  = (int32_t)(fs->tk_med_acc   >> 8);
+    int32_t tk_s  = (int32_t)(fs->tk_slow_acc  >> 15);
+
+    int32_t ll_den  = (ll_s  > 8)  ? ll_s  : 8;
+    int32_t sw_den  = (sw_s  > 16) ? sw_s  : 16;
+    int32_t env_den = (env_s > 16) ? env_s : 16;
+    int32_t tk_den  = (tk_s  > 8)  ? tk_s  : 8;
+
+    int32_t env_val = (int32_t)dsp_out1->env_q15;
+    out_f[0]  = nl_clamp_u7((ll_f  * 16) / ll_den);
+    out_f[1]  = nl_clamp_u7((ll_m  * 16) / ll_den);
+    out_f[2]  = nl_clamp_u7((sw_f  * 16) / sw_den);
+    out_f[3]  = nl_clamp_u7((sw_m  * 16) / sw_den);
+    out_f[4]  = 35;
+    out_f[5]  = nl_clamp_u7((env_m * 16) / env_den);
+    out_f[6]  = nl_clamp_u7((tk_m  * 8)  / tk_den);
+    out_f[7]  = nl_clamp_i8((sw_m - env_m) >> 4);
+    out_f[8]  = nl_clamp_u7(ll_m >> 1);
+    out_f[9]  = nl_clamp_u7(sw_m >> 4);
+    out_f[10] = nl_clamp_u7(env_val >> 4);
+    out_f[11] = nl_clamp_u7(env_m >> 4);
+    out_f[12] = nl_clamp_i8((env_val - env_m) >> 3);
+    int32_t abs_ph = (dsp_out1->phase_q15 < 0) ? -(int32_t)dsp_out1->phase_q15 : (int32_t)dsp_out1->phase_q15;
+    out_f[13] = nl_clamp_u7(abs_ph >> 8);
+    int32_t abs_i = (dsp_out1->I_q15 < 0) ? -(int32_t)dsp_out1->I_q15 : (int32_t)dsp_out1->I_q15;
+    int32_t abs_q = (dsp_out1->Q_q15 < 0) ? -(int32_t)dsp_out1->Q_q15 : (int32_t)dsp_out1->Q_q15;
+    out_f[14] = nl_clamp_u7(abs_i >> 4);
+    out_f[15] = nl_clamp_u7(abs_q >> 4);
+}
 static uint8_t        g_state = NL_STATE_ARMED;
 static bool           g_armed = true;
 static uint16_t       g_budget_used = 0;
@@ -208,6 +361,7 @@ void nl_run_sim_burst(void) {
 void nl_run_sim_rest(void) {
     nl_snn_reset(&g_snn);
     nl_dsp_init(&g_dsp);
+    nl_feat_reset(&g_feat);
     g_state = g_armed ? NL_STATE_ARMED : NL_STATE_IDLE;
     nl_set_status_led(0, 15, 0); // Always restore resting baseline Green
     nl_lcd_show_neuro(g_armed ? "RESTING" : "DISARMED", 35, 0);
@@ -289,8 +443,9 @@ void setup() {
     pinMode(PIN_STIM_OUT, OUTPUT);
     digitalWrite(PIN_STIM_OUT, LOW);
 
-    /* 3. Initialize DSP & SNN state */
+    /* 3. Initialize DSP, causal feature tracker & SNN state */
     nl_dsp_init(&g_dsp);
+    nl_feat_reset(&g_feat);
     nl_snn_reset(&g_snn);
     init_snn_weights();
 
@@ -389,32 +544,8 @@ void loop() {
         g_last_dsp_out = dsp_out1;
         uint32_t t_dsp = (uint32_t)esp_timer_get_time();
 
-        /* Populate 16 int8 input features matching clinical SNN training pipeline */
-        int16_t env = dsp_out1.env_q15;
-        g_in_feat[0] = (int8_t)(env > 1016 ? 127 : (env >> 3));
-        g_in_feat[1] = (int8_t)(env > 2032 ? 127 : (env >> 4));
-        g_in_feat[2] = (int8_t)(env > 4064 ? 127 : (env >> 5));
-        g_in_feat[3] = (int8_t)(env > 8128 ? 127 : (env >> 6));
-        g_in_feat[4] = 35; // Constant baseline reference threshold (inhibitory)
-        g_in_feat[5] = (int8_t)(((int32_t)env * 16) / 200 > 127 ? 127 : ((int32_t)env * 16) / 200);
-
-        int16_t d_env = env - g_last_dsp_out.env_q15;
-        g_in_feat[6] = (int8_t)(d_env > 254 ? 127 : (d_env < -256 ? -128 : (d_env >> 1)));
-        g_in_feat[7] = (int8_t)(d_env > 508 ? 127 : (d_env < -512 ? -128 : (d_env >> 2)));
-
-        g_in_feat[8]  = (int8_t)(dsp_out1.I_q15 >> 7);
-        g_in_feat[9]  = (int8_t)(dsp_out1.Q_q15 >> 7);
-        g_in_feat[10] = (int8_t)(dsp_out1.I_q15 >> 8);
-        g_in_feat[11] = (int8_t)(dsp_out1.Q_q15 >> 8);
-
-        g_in_feat[12] = (int8_t)(dsp_out1.phase_q15 >> 8);
-        int32_t abs_raw_phase = dsp_out1.phase_q15 < 0 ? -dsp_out1.phase_q15 : dsp_out1.phase_q15;
-        g_in_feat[13] = (int8_t)(abs_raw_phase >> 8);
-
-        int32_t abs_i = dsp_out1.I_q15 < 0 ? -dsp_out1.I_q15 : dsp_out1.I_q15;
-        int32_t abs_q = dsp_out1.Q_q15 < 0 ? -dsp_out1.Q_q15 : dsp_out1.Q_q15;
-        g_in_feat[14] = (int8_t)(abs_i > 16256 ? 127 : (abs_i >> 7));
-        g_in_feat[15] = (int8_t)(abs_q > 16256 ? 127 : (abs_q >> 7));
+        /* Populate 16 causal clinical int8 features matching Colab QAT-BPTT & host/train_snn.py */
+        nl_extract_features_block(&g_feat, in_frame->samples[0], in_frame->samples[1], &dsp_out1, g_in_feat);
 
         /* Execute 64-neuron int8 LIF SNN over 8 sub-steps */
         uint8_t spike_count = nl_snn_step_block(&g_snn, g_in_feat, g_w1, g_w2, dsp_out1.blanked);

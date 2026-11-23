@@ -9,7 +9,16 @@ import pytest
 
 from host.replay.patient_data import PatientBrain, ensure_patient_dataset, compute_empirical_synchrony
 import inspect
-from host.train_snn import extract_dsp_features, simulate_snn_fast, compute_fast_auroc
+from host.train_snn import (
+    extract_dsp_features,
+    simulate_snn_fast,
+    compute_fast_auroc,
+    load_header_weights,
+    evaluate_weights_on_chb03,
+    NL_SNN_TH_Q12,
+    NL_SNN_BETA_M,
+    NL_SNN_MAX_V,
+)
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -107,4 +116,25 @@ def test_kuramoto_order_parameter_calibration() -> None:
         assert np.median(r_base) < 0.25, f"Patient {pat} median baseline R must be < 0.25, got {np.median(r_base):.3f}"
         assert pct_ictal_red >= 75.0, f"Patient {pat} ictal time red must be >= 75%, got {pct_ictal_red:.1f}%"
         assert pct_base_green >= 80.0, f"Patient {pat} baseline time green must be >= 80%, got {pct_base_green:.1f}%"
+
+
+def test_firmware_snn_hardware_parity_and_colab_qat_weights() -> None:
+    """Verify exact C hardware constants (nl_snn.h) and Colab QAT-BPTT header weights on held-out chb03."""
+    # Exact parity with firmware/components/snn/include/nl_snn.h
+    assert NL_SNN_TH_Q12 == 4096
+    assert NL_SNN_BETA_M == 3686
+    assert NL_SNN_MAX_V == 28672
+
+    w1, w2 = load_header_weights(WEIGHTS_HEADER)
+    assert w1.shape == (64, 16) and w1.dtype == np.int8
+    assert w2.shape == (64,) and w2.dtype == np.int8
+    # Verify genuine heterogeneous receptive fields (not cloned linear rows) & signed readout weights
+    assert len(np.unique(w1[:, :4], axis=0)) >= 32, "Hidden neurons must have heterogeneous learned weights"
+    assert np.any(w2 > 0) and np.any(w2 < 0), "Readout weights must include both excitatory and inhibitory neurons"
+
+    metrics = evaluate_weights_on_chb03(w1, w2)
+    assert metrics["auroc"] >= 0.90, f"Colab QAT-BPTT held-out chb03 AUROC must be >= 0.90, got {metrics['auroc']}"
+    assert metrics["sensitivity"] >= 0.85, f"Held-out chb03 sensitivity must be >= 85%, got {metrics['sensitivity']}"
+    assert metrics["specificity"] >= 0.85, f"Held-out chb03 specificity must be >= 85%, got {metrics['specificity']}"
+
 

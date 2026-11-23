@@ -1,15 +1,51 @@
 {
-  "dataset": "CHB-MIT Scalp EEG (PhysioNet)",
+  "dataset": "CHB-MIT Scalp EEG (PhysioNet, 10-Patient LOPO)",
   "train_patients": [
     "chb01",
-    "chb02"
+    "chb02",
+    "chb04",
+    "chb05",
+    "chb06",
+    "chb07",
+    "chb08",
+    "chb09",
+    "chb10"
   ],
   "test_patient": "chb03",
   "held_out_generalisation": true,
-  "n_test_blocks": 60500,
-  "auroc": 0.844,
-  "sensitivity": 0.8026,
-  "specificity": 0.8176,
-  "mean_ictal_spikes": 6.38,
-  "mean_baseline_spikes": 1.49
+  "training_method": "Google Colab PyTorch Quantization-Aware Surrogate-Gradient BPTT (Bit-Exact Q12 LIF)",
+  "n_test_blocks": 236000,
+  "auroc": 0.9635,
+  "sensitivity": 0.9353,
+  "specificity": 0.8899,
+  "mean_ictal_spikes": 5.4,
+  "mean_baseline_spikes": 1.32,
+  "lopo_10pat_summary": {
+    "n_patients": 10,
+    "n_seizures": 30,
+    "seizures_detected": 28,
+    "mean_auroc": 0.8226,
+    "mean_auprc": 0.4383,
+    "mean_sensitivity": 0.5931,
+    "mean_specificity": 0.8729,
+    "mean_latency_s": 5.56,
+    "mean_far_per_hr": 46.78,
+    "mean_base_sparsity_pct": 83.3,
+    "bit_exact_mismatches": 0
+  },
+  "chb03_3seizure_colab": {
+    "patient": "chb03",
+    "auroc": 0.9435,
+    "auprc": 0.3378,
+    "sensitivity": 0.91,
+    "specificity": 0.882,
+    "mean_ictal_spikes": 5.05,
+    "mean_base_spikes": 1.57,
+    "event_sens": "3/3",
+    "sz_detected": 3,
+    "sz_total": 3,
+    "mean_latency_s": 1.06,
+    "far_per_hr": 0.0,
+    "base_sparsity_pct": 82.8
+  }
 }
