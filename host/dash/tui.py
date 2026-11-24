@@ -34,6 +34,13 @@ from host.virtualbrain.kuramoto import KuramotoBrain, KuramotoConfig
 from host.virtualbrain.jansen_rit import JansenRitBrain, JansenRitConfig
 from host.replay.patient_data import PatientBrain
 from host.hil.dsp_ref import DspChainRef
+from host.dash.warp_fx import (
+    SPINNER_BRAILLE,
+    fg_rgb,
+    gradient_text,
+    play_warp_boot_splash,
+    render_smooth_bar,
+)
 
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
@@ -213,14 +220,24 @@ def sparkline(
 
 
 def render_phase_compass(psi_rad: float, r_val: float, fired: bool,
-                         zone: Optional[int] = None) -> List[str]:
+                         zone: Optional[int] = None, pulse_glow: int = 0) -> List[str]:
     """Render a 7-line high-precision ASCII/Unicode polar compass with 12 PRC phase sectors."""
     ang = ((psi_rad + np.pi) % (2.0 * np.pi)) - np.pi
     sector = int(np.round((ang + np.pi) / (2.0 * np.pi) * 12.0)) % 12
     # 12 clock positions: 0=9h(-π, TARGET), 1=8h, 2=7h, 3=6h(-π/2), 4=5h, 5=4h, 6=3h(0), 7=2h, 8=1h, 9=12h(+π/2), 10=11h, 11=10h
     p = [f"{C_GRAY}·{C_RESET}"] * 12
-    p[0] = f"{C_GREEN}◎{C_RESET}"  # Optimal PRC target φ* = -π
-    p[sector] = f"{C_GREEN}★{C_RESET}" if fired else f"{C_WHITE}●{C_RESET}"
+    if pulse_glow >= 4:
+        p[0] = f"{fg_rgb(110, 231, 183)}{C_BOLD}✦{C_RESET}"
+    elif pulse_glow >= 2:
+        p[0] = f"{fg_rgb(56, 189, 248)}{C_BOLD}◈{C_RESET}"
+    else:
+        p[0] = f"{C_GREEN}◎{C_RESET}"  # Optimal PRC target φ* = -π
+    if fired or pulse_glow >= 5:
+        p[sector] = f"{fg_rgb(110, 231, 183)}{C_BOLD}★{C_RESET}"
+    elif pulse_glow >= 2:
+        p[sector] = f"{fg_rgb(56, 189, 248)}✦{C_RESET}"
+    else:
+        p[sector] = f"{C_WHITE}●{C_RESET}"
     vec_char = (
         "←"
         if sector in (0, 1, 11)
@@ -240,23 +257,28 @@ def render_phase_compass(psi_rad: float, r_val: float, fired: bool,
 
 
 def render_snn_raster(
-    env_q15: int, phase_q15: int, step_num: int, width: int = 32
+    env_q15: int, phase_q15: int, step_num: int, width: int = 32, pulse_glow: int = 0
 ) -> str:
-    """Deterministic 32-column visualization of the 64-neuron Int8 LIF SNN population activity."""
+    """24-bit true-color Warp-style visualization of 64-neuron Int8 LIF SNN activity."""
     cells: List[str] = []
+    glow_boost = 0.25 if pulse_glow > 0 else 0.0
     for i in range(width):
-        # Map neuron pair activity from envelope & phase tuning curve
         pref_phase = ((i / width) * 65536.0) - 32768.0
         phase_dist = abs(((phase_q15 - pref_phase + 32768.0) % 65536.0) - 32768.0)
-        drive = (env_q15 / 1400.0) * max(0.0, 1.0 - phase_dist / 16384.0)
+        drive = (env_q15 / 1400.0) * max(0.0, 1.0 - phase_dist / 16384.0) + glow_boost * max(
+            0.0, 1.0 - abs(i - ((step_num // 2) % width)) / 6.0
+        )
         if drive > 0.85 and ((step_num + i) % 3 == 0):
-            cells.append(f"{C_GREEN}█{C_RESET}")
-        elif drive > 0.45:
-            cells.append(f"{C_CYAN}▓{C_RESET}")
-        elif drive > 0.20:
-            cells.append(f"{C_TEAL}▒{C_RESET}")
+            cells.append(f"{fg_rgb(110, 231, 183)}█")
+        elif drive > 0.55:
+            cells.append(f"{fg_rgb(56, 189, 248)}▓")
+        elif drive > 0.30:
+            cells.append(f"{fg_rgb(129, 140, 248)}▒")
+        elif drive > 0.14:
+            cells.append(f"{fg_rgb(71, 85, 105)}░")
         else:
-            cells.append(f"{C_GRAY}·{C_RESET}")
+            cells.append(f"{fg_rgb(51, 65, 85)}·")
+    cells.append(C_RESET)
     return "".join(cells)
 
 
@@ -368,6 +390,8 @@ def run_tui(
     if max_frames is None:
         sys.stdout.write("\033[?1049h\033[?7l\033[H\033[2J\033[?25l")
         sys.stdout.flush()
+        if not trace:
+            play_warp_boot_splash(port=port, hw_live=hw_live, mirror=mirror)
 
     has_msvcrt = False
     if os.name == "nt" and max_frames is None:
@@ -385,6 +409,7 @@ def run_tui(
     bot_border = f"╰─{'─' * w_l}─┴─{'─' * w_r}─╯"
 
     frame_count = 0
+    pulse_glow = 0
     last_hotplug_probe = time.time()
     try:
         while True:
@@ -627,10 +652,17 @@ def run_tui(
                 )
             cur_r = zt.r
             zone = zt.zone
+            if fired_this_batch:
+                pulse_glow = 6
+            elif pulse_glow > 0:
+                pulse_glow -= 1
+
+            anim_phase = (frame_count * 0.028) % 1.0
+            spin_ch = SPINNER_BRAILLE[frame_count % len(SPINNER_BRAILLE)]
+
             r_col = (C_GREEN, C_AMBER, C_RED)[zone]
             zone_badge = f"{r_col}{C_BOLD}■ {zt.name}{C_RESET}"
-            r_bar_len = int(np.clip(round(cur_r * 38), 0, 38))
-            r_bar = f"{r_col}{'█' * r_bar_len}{C_GRAY}{'░' * (38 - r_bar_len)}{C_RESET}"
+            r_bar = render_smooth_bar(cur_r, width=38, zone=zone, phase=anim_phase)
 
             p50_rtt = float(np.percentile(rtt_win, 50))
             p95_rtt = float(np.percentile(rtt_win, 95))
@@ -680,8 +712,7 @@ def run_tui(
                     else ("C: SHAM" if arm_idx == 1 else "B: OPEN 20Hz")
                 )
 
-                r_bar_len_c = int(np.clip(round(cur_r * 24), 0, 24))
-                r_bar_c = f"{r_col}{'█' * r_bar_len_c}{C_GRAY}{'░' * (24 - r_bar_len_c)}{C_RESET}"
+                r_bar_c = render_smooth_bar(cur_r, width=24, zone=zone, phase=anim_phase)
 
                 braille_c = render_braille_plot(
                     list(r_hist),
@@ -694,17 +725,29 @@ def run_tui(
                     tiered_colors=False,
                 )
                 snn_strip_c = render_snn_raster(
-                    bp_out.env_q15, bp_out.phase_q15, seq, width=22
+                    bp_out.env_q15, bp_out.phase_q15, seq, width=22, pulse_glow=pulse_glow
                 )
 
                 ang = ((psi_val + np.pi) % (2.0 * np.pi)) - np.pi
                 sec = int(np.round((ang + np.pi) / (2.0 * np.pi) * 12.0)) % 12
                 pt = [f"{C_GRAY}·{C_RESET}"] * 12
-                pt[0] = f"{C_GREEN}◎{C_RESET}"
+                pt[0] = (
+                    f"{fg_rgb(110, 231, 183)}{C_BOLD}✦{C_RESET}"
+                    if pulse_glow >= 4
+                    else (
+                        f"{fg_rgb(56, 189, 248)}{C_BOLD}◈{C_RESET}"
+                        if pulse_glow >= 2
+                        else f"{C_GREEN}◎{C_RESET}"
+                    )
+                )
                 pt[sec] = (
-                    f"{C_GREEN}★{C_RESET}"
-                    if fired_this_batch
-                    else f"{C_WHITE}●{C_RESET}"
+                    f"{fg_rgb(110, 231, 183)}{C_BOLD}★{C_RESET}"
+                    if (fired_this_batch or pulse_glow >= 5)
+                    else (
+                        f"{fg_rgb(56, 189, 248)}✦{C_RESET}"
+                        if pulse_glow >= 2
+                        else f"{C_WHITE}●{C_RESET}"
+                    )
                 )
                 vec_char = (
                     "←"
@@ -729,8 +772,14 @@ def run_tui(
                 ev0_col = C_GREEN if ("STIM" in ev0 or "TREAT" in ev0) else C_CYAN
                 ev1_col = C_GREEN if ("STIM" in ev1 or "TREAT" in ev1) else C_CYAN
 
+                warp_hdr_c = (
+                    f" {fg_rgb(56, 189, 248)}{spin_ch}{C_RESET} "
+                    f"{gradient_text('⚡ NURO v1.0', phase=anim_phase, bold=True)} "
+                    f"{C_GRAY}│{C_RESET} {C_WHITE}CHB-MIT Closed-Loop{C_RESET} "
+                    f"{C_GRAY}│{C_RESET} {fg_rgb(52, 211, 153)}0.964 AUROC{C_RESET}"
+                )
                 rows = [
-                    f"{C_BG_BAR}{pad_ansi(f' ⚡ {C_BOLD}NURO TUI v0.3.0{C_RESET} │ CHB-MIT Patient Treatment', 78)}{C_RESET}",
+                    f"{C_BG_BAR}{pad_ansi(warp_hdr_c, 78)}{C_RESET}",
                     top_b,
                     make_row(
                         f"{C_BOLD}LINK:{C_RESET} {hw_badge} {compact_loop}",
@@ -839,7 +888,7 @@ def run_tui(
                 # =========================================================
                 # EXPANDED WIDESCREEN LAYOUT (>= 105 cols, >= 28 lines)
                 # =========================================================
-                compass = render_phase_compass(psi_val, cur_r, fired_this_batch, zone)
+                compass = render_phase_compass(psi_val, cur_r, fired_this_batch, zone, pulse_glow=pulse_glow)
                 braille_r = render_braille_plot(
                     list(r_hist),
                     0.0,
@@ -851,11 +900,15 @@ def run_tui(
                     tiered_colors=False,
                 )
                 snn_strip = render_snn_raster(
-                    bp_out.env_q15, bp_out.phase_q15, seq, width=35
+                    bp_out.env_q15, bp_out.phase_q15, seq, width=35, pulse_glow=pulse_glow
                 )
 
                 header_title = pad_ansi(
-                    f" ⚡ {C_BOLD}NEURAL LOOP TUI v2.0{C_RESET} │ $0 ESP32-S3 HIL Closed-Loop Edge Neuromodulation Workstation │ 2000 Hz Lockstep",
+                    f" {fg_rgb(56, 189, 248)}{spin_ch}{C_RESET} "
+                    f"{gradient_text('⚡ NURO WORKSTATION v1.0', phase=anim_phase, bold=True)} "
+                    f"{C_GRAY}│{C_RESET} ESP32-S3 Closed-Loop Edge Neuromodulation "
+                    f"{C_GRAY}│{C_RESET} {fg_rgb(52, 211, 153)}0.964 AUROC QAT-SNN{C_RESET} "
+                    f"{C_GRAY}│{C_RESET} 2000 Hz Lockstep",
                     total_w,
                 )
 
