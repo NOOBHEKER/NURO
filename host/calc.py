@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import math
 import os
+import random
 import re
 import sys
 from typing import Dict, Any, List, Tuple, Optional
@@ -358,6 +359,132 @@ def natural_to_sympy_str(text: str) -> str:
     return s
 
 
+# ---------------------------------------------------------------------------
+# STEM test-question bank (the `test` command).
+# The same feature exists on-chip in firmware/src/nl_calc_embedded.cpp so the
+# command behaves identically whether nuro runs on a PC or on the ESP32-S3.
+# Each item: topic, question, 4 options, index of the correct option, why.
+# ---------------------------------------------------------------------------
+TEST_QUESTION_BANK: List[Dict[str, Any]] = [
+    {
+        "topic": "AI",
+        "q": "What does 'AI' stand for?",
+        "options": [
+            "Artificial Intelligence",
+            "Automatic Input",
+            "Advanced Internet",
+            "Applied Informatics",
+        ],
+        "answer": 0,
+        "explain": "AI = Artificial Intelligence: machines doing tasks that normally need human intelligence.",
+    },
+    {
+        "topic": "Programming",
+        "q": "Which keyword defines a function in Python?",
+        "options": ["func", "def", "define", "lambda"],
+        "answer": 1,
+        "explain": "Python uses 'def' to define a named function.",
+    },
+    {
+        "topic": "Robotics",
+        "q": "What does 'SLAM' stand for in robotics?",
+        "options": [
+            "Simple Logic And Motion",
+            "Sensor Link And Mapping",
+            "Simultaneous Localisation And Mapping",
+            "System Level Autonomous Movement",
+        ],
+        "answer": 2,
+        "explain": "SLAM = Simultaneous Localisation And Mapping: build a map while tracking position.",
+    },
+    {
+        "topic": "Machine Learning",
+        "q": "What is 'overfitting' in machine learning?",
+        "options": [
+            "Training too slowly",
+            "Using too little data",
+            "Running out of memory",
+            "Memorising training data and failing on new data",
+        ],
+        "answer": 3,
+        "explain": "Overfitting means great on training data but poor on unseen data.",
+    },
+    {
+        "topic": "Physics",
+        "q": "What is the SI unit of force?",
+        "options": ["Newton", "Joule", "Watt", "Pascal"],
+        "answer": 0,
+        "explain": "Force is measured in newtons (N).",
+    },
+    {
+        "topic": "Chemistry",
+        "q": "What is the chemical formula for water?",
+        "options": ["CO2", "H2O", "O2", "NaCl"],
+        "answer": 1,
+        "explain": "Water is H2O: two hydrogen atoms bonded to one oxygen atom.",
+    },
+    {
+        "topic": "Maths",
+        "q": "What is the sum of the interior angles of a triangle?",
+        "options": ["90 degrees", "270 degrees", "180 degrees", "360 degrees"],
+        "answer": 2,
+        "explain": "Every triangle's interior angles add up to 180 degrees.",
+    },
+    {
+        "topic": "AI",
+        "q": "Which company developed ChatGPT?",
+        "options": ["Google", "Microsoft", "Meta", "OpenAI"],
+        "answer": 3,
+        "explain": "ChatGPT was developed by OpenAI.",
+    },
+    {
+        "topic": "Robotics",
+        "q": "What is the job of an actuator in a robot?",
+        "options": [
+            "Converts energy into motion",
+            "Stores program memory",
+            "Measures distance",
+            "Provides power",
+        ],
+        "answer": 0,
+        "explain": "An actuator turns energy into physical motion - the robot's muscles.",
+    },
+    {
+        "topic": "Programming",
+        "q": "Which data structure follows LIFO (Last In, First Out)?",
+        "options": ["Queue", "Stack", "Tree", "Graph"],
+        "answer": 1,
+        "explain": "A stack is LIFO: the last item pushed is the first popped.",
+    },
+]
+
+
+def render_test_question(count: int = 1) -> str:
+    """Return one or more random STEM test questions with answers.
+
+    Mirrors the on-chip `test` command so the behaviour is the same on any
+    system (host PC or ESP32-S3).
+    """
+    count = max(1, min(int(count), len(TEST_QUESTION_BANK)))
+    picks = random.sample(TEST_QUESTION_BANK, count)
+    letters = "ABCD"
+    header = "TEST QUESTION" if count == 1 else f"TEST QUESTIONS ({count})"
+    lines = [f"\n{C_BOLD}{C_CYAN}⚡ NURO {header}:{C_RESET}"]
+    for i, item in enumerate(picks, 1):
+        lines.append(f"{C_BOLD}{C_WHITE}Q{i}. {item['q']}{C_RESET}")
+        for j, opt in enumerate(item["options"]):
+            lines.append(f"   {C_GRAY}{letters[j]}){C_RESET} {opt}")
+        ans = item["answer"]
+        lines.append(
+            f"   {C_GREEN}Answer: {letters[ans]}) {item['options'][ans]}{C_RESET}"
+        )
+        lines.append(f"   {C_GRAY}Why: {item['explain']}{C_RESET}")
+        lines.append(f"   {C_GRAY}Topic: {item['topic']}{C_RESET}")
+        if i != len(picks):
+            lines.append("")
+    return "\n".join(lines)
+
+
 def calculate_and_graph(
     query: str, domain: Optional[Tuple[float, float]] = None
 ) -> str:
@@ -397,8 +524,27 @@ def calculate_and_graph(
             f"  {C_AMBER}Physics  :{C_RESET} pascal 50 0.01 0.5 │ projectile v=50 angle=45 │ rlc R=5 L=50 C=100\n"
             f"  {C_GREEN}Chemistry:{C_RESET} mass C6H12O6 │ KMnO4 + HCl -> KCl + MnCl2 + H2O + Cl2 │ ph 0.01\n"
             f"  {C_PURPLE}Neural   :{C_RESET} neural / live / tui (animated 60 FPS graph) │ burst (trigger test) │ status / neuro (telemetry)\n"
+            f"  {C_CYAN}Test     :{C_RESET} test │ quiz │ question [n] (AI chatbot quiz — asks n questions)\n"
             f"  {C_WHITE}Obsidian :{C_RESET} session switch <name> │ to obsidian [vault] │ obsidian\n"
         )
+
+    # Test / quiz question: "test", "quiz", "question", "trivia" [count]
+    # Works on any system (host Python and the on-chip firmware mirror it).
+    _test_tokens = q_cmd.split()
+    if _test_tokens and _test_tokens[0] in (
+        "test",
+        "quiz",
+        "question",
+        "qtest",
+        "trivia",
+        "exam",
+    ):
+        n_q = 3
+        if len(_test_tokens) > 1 and _test_tokens[1].isdigit():
+            n_q = int(_test_tokens[1])
+        from host.chatbot import run_chatbot_session
+
+        return run_chatbot_session(n_q)
 
     # Live Animated Graphs: "neural", "mneuro", "tui", "live", "animated", "oscilloscope", "live graph", "animated graph", "neural loop", "loop"
     if q_cmd in (
@@ -948,47 +1094,58 @@ def calc_get_line(prompt: str) -> str:
         raise KeyboardInterrupt
 
 
-def run_calc_repl() -> None:
+def _print_calc_help() -> None:
+    """Compact on-demand command reference inside the interactive shell."""
+    print(f"\n  {C_CYAN}Math     {C_RESET} quad 1 -5 6  ·  5*3 + 10  ·  x^2 - 5x + 6 = 0  ·  diff sin(x)")
+    print(f"  {C_AMBER}Physics  {C_RESET} pascal 50 0.01 0.5  ·  projectile v=50 angle=45  ·  rlc R=5 L=50 C=100")
+    print(f"  {C_GREEN}Chemistry{C_RESET} mass C6H12O6  ·  KMnO4 + HCl -> KCl + MnCl2 + H2O + Cl2  ·  ph 0.01")
+    print(f"  {C_PURPLE}Neural   {C_RESET} tui / live  ·  burst  ·  status  ·  neuro")
+    print(f"  {C_CYAN}AI & Lab {C_RESET} chat / test [n]  ·  session switch <name>  ·  obsidian\n")
+
+
+def run_calc_repl(show_banner: bool = True) -> None:
     """Interactive All-In-One Terminal Shell (Math, Physics, Chemistry, Neural Loop, Obsidian)."""
     if os.name == "nt":
         os.system("")
-    print(
-        f"\n{C_BOLD}{C_CYAN}╔═══════════════════════════════════════════════════════════════╗{C_RESET}"
-    )
-    print(
-        f"{C_BOLD}{C_CYAN}║     ⚡ nuro — All-In-One Interactive Terminal Shell           ║{C_RESET}"
-    )
-    print(
-        f"{C_BOLD}{C_CYAN}╚═══════════════════════════════════════════════════════════════╝{C_RESET}"
-    )
-    print(
-        f"{C_GRAY}Normal Signs Only:{C_RESET} {C_GREEN}* (multiply){C_RESET} │ {C_CYAN}+ (add){C_RESET} │ {C_AMBER}- (subtract){C_RESET} │ {C_PURPLE}/ (divide){C_RESET} │ {C_WHITE}^ or ** (power){C_RESET}"
-    )
-    print(f"{C_GRAY}Commands (All in Terminal):{C_RESET}")
-    print(
-        f"  {C_CYAN}Math     :{C_RESET} quad 1 -5 6 │ 5*3 + 10 │ x^2 - 5x + 6 = 0 │ diff sin(x) │ integrate x^2"
-    )
-    print(
-        f"  {C_AMBER}Physics  :{C_RESET} pascal 50 0.01 0.5 │ projectile v=50 angle=45 │ rlc R=5 L=50 C=100"
-    )
-    print(
-        f"  {C_GREEN}Chemistry:{C_RESET} mass C6H12O6 │ KMnO4 + HCl -> KCl + MnCl2 + H2O + Cl2 │ ph 0.01"
-    )
-    print(
-        f"  {C_PURPLE}Neural   :{C_RESET} neural / live / tui (animated 60 FPS graph) │ burst (trigger test) │ status / neuro (telemetry)"
-    )
-    print(
-        f"  {C_WHITE}Obsidian :{C_RESET} session switch <name> │ to obsidian [vault] │ obsidian\n"
-    )
+    if show_banner:
+        from host.dash.warp_fx import print_warp_cli_menu
 
+        print_warp_cli_menu(animate=True)
+
+    prompt = f"\033[1m\033[38;2;56;189;248mnuro\033[0m \033[38;2;52;211;153m❯\033[0m "
     while True:
         try:
-            raw = calc_get_line(f"{C_BOLD}{C_GREEN}nuro>{C_RESET} ").strip()
+            raw = calc_get_line(prompt).strip()
             if not raw:
                 continue
             if raw.lower() in ("exit", "quit", "q"):
                 print(f"{C_GRAY}Exiting nuro terminal.{C_RESET}")
                 break
+            if raw == "/" or raw.lower() == "functions":
+                from host.dash.warp_fx import _SLASH_FUNCS
+
+                print(f"\n  {C_BOLD}{C_CYAN}ALL FUNCTIONS:{C_RESET}")
+                half = (len(_SLASH_FUNCS) + 1) // 2
+                for i in range(half):
+                    l = _SLASH_FUNCS[i]
+                    r = _SLASH_FUNCS[i + half] if i + half < len(_SLASH_FUNCS) else None
+                    r_txt = f"  {C_CYAN}{r[0]:<11s}{C_RESET} {r[1]}" if r else ""
+                    print(f"  {C_CYAN}{l[0]:<11s}{C_RESET} {l[1]:<26s}{r_txt}")
+                print()
+                continue
+            if raw == "?" or raw.lower() in ("help", "commands"):
+                from host.dash.warp_fx import _ALL_COMMANDS
+
+                print(f"\n  {C_BOLD}{C_CYAN}ALL COMMANDS:{C_RESET}")
+                half = (len(_ALL_COMMANDS) + 1) // 2
+                for i in range(half):
+                    l = _ALL_COMMANDS[i]
+                    r = _ALL_COMMANDS[i + half] if i + half < len(_ALL_COMMANDS) else None
+                    r_txt = f"  {C_CYAN}{r[0]:<11s}{C_RESET} {r[1]}" if r else ""
+                    print(f"  {C_CYAN}{l[0]:<11s}{C_RESET} {l[1]:<26s}{r_txt}")
+                _print_calc_help()
+                continue
+            raw = raw.lstrip("/")
             print()
             print(calculate_and_graph(raw))
             print()

@@ -102,9 +102,135 @@ def handle_session_command(args: List[str]) -> str:
     )
 
 
+def _looks_like_math_or_sci(q: str) -> bool:
+    """Return True if a free-form query is a math/chem/physics expression rather than natural chat."""
+    import re
+
+    ql = q.strip().lower()
+    if not ql:
+        return False
+    if "->" in q or "➔" in q:
+        return True
+    sci_kw = (
+        "molar mass", "titration", "kinetics", "kmno4", "projectile", "rlc",
+        "relativity", "bohr", "blackbody", "photoelectric", "lorentz", "damping",
+        "pascal", "hydraulic", "archimedes", "d/dx", "diff(", "integrate",
+        "integral", "derivative", "solve(", "factor(", "limit(", "sin(", "cos(",
+        "tan(", "log(", "ln(", "sqrt(", "plot ", "graph ",
+    )
+    if any(k in ql for k in sci_kw):
+        return True
+    # Pure arithmetic/algebraic expressions (contain digits + math operators, no long prose)
+    if re.search(r"\d", ql) and re.search(r"[+\-*/^=]", ql) and len(ql.split()) <= 6:
+        return True
+    return False
+
+
+def _instant_fast_reply(q: str) -> str | None:
+    """Zero-latency (<1 ms) reply for simple greetings/small-talk while local LLM stays warm."""
+    ql = q.strip().lower().rstrip("!?., ")
+    if ql in ("hi", "hey", "hello", "yo", "sup", "hii", "heyy", "hola", "namaste"):
+        return "Hey! I'm NURO — ask me anything, type math/science, or press Enter for /tui & commands."
+    if ql in ("good morning", "gm", "good afternoon", "good evening"):
+        return f"{q.strip().capitalize()}! What are we working on today?"
+    if ql in ("how are you", "how r u", "hru", "whats up", "what's up"):
+        return "Running fast and ready! Ask any question, solve an equation, or launch /tui."
+    if ql in ("thanks", "thank you", "thx", "ty"):
+        return "Anytime! Let me know if you need anything else."
+    if ql in ("who are you", "what are you", "what can you do"):
+        return (
+            "I'm NURO — your offline closed-loop ESP32-S3 SNN cockpit + local Qwen3 AI + "
+            "math/chem/physics solver. Ask anything, or press Enter to return to the 3D menu."
+        )
+    return None
+
+
+def _inline_ai_reply(first_query: str) -> None:
+    """Answer any natural-language message directly via local Qwen3 (auto-starting Ollama) with follow-up chat."""
+    from host import llm_backend
+
+    history: List[dict] = []
+    q = first_query.strip()
+    print()
+    while q:
+        if q.lower() in ("back", "menu", "q", "quit", "exit"):
+            return
+        fast = _instant_fast_reply(q)
+        if fast is not None:
+            # Respond in <1 ms while quietly warming Ollama in the background for the next question!
+            _start_llm_background_warmup()
+            print(f"\033[1;36m[nuro]\033[0m {fast}\n")
+            history.append({"role": "user", "content": q})
+            history.append({"role": "assistant", "content": fast})
+        else:
+            if not llm_backend.ensure_server(wait_seconds=18.0):
+                try:
+                    from host.chatbot import answer_question
+
+                    ans = answer_question(q)
+                    print(f"\033[1;36mNURO ❯\033[0m {ans}\n")
+                except Exception:
+                    print("\033[33m[nuro] Local AI not available. Run `nuro llm pull qwen3:0.6b`.\033[0m\n")
+                return
+            backend = llm_backend.detect()
+            tag = backend.model if backend else llm_backend.DEFAULT_MODEL
+            print(f"\033[1;36m[{tag}]\033[0m ", end="", flush=True)
+            chunks: List[str] = []
+            for piece in llm_backend.ask_stream(q, history=history, max_tokens=200):
+                sys.stdout.write(piece)
+                sys.stdout.flush()
+                chunks.append(piece)
+            print("\n")
+            reply = "".join(chunks).strip()
+            if reply:
+                history.append({"role": "user", "content": q})
+                history.append({"role": "assistant", "content": reply})
+            else:
+                print("\033[33m[nuro] No response from local model.\033[0m\n")
+        if not sys.stdin.isatty():
+            return
+        try:
+            nxt = input("\033[1;36mYou ❯\033[0m ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return
+        if not nxt:
+            return
+        q = nxt
+
+
+def _start_llm_background_warmup() -> None:
+    """Quietly boot Ollama in the background on `nuro` launch so 'hey' responds fast."""
+    import threading
+
+    def _boot() -> None:
+        try:
+            from host import llm_backend
+
+            if llm_backend.ensure_server(wait_seconds=15.0):
+                llm_backend.warmup(timeout=30.0)
+        except Exception:
+            pass
+
+    threading.Thread(target=_boot, daemon=True).start()
+
+
 def main() -> None:
-    # Windows consoles default to cp1252 when redirected; the CLI uses Unicode
-    # symbols and the firmware banner uses a lightning bolt.
+    # Windows classic Command Prompt defaults to CP437; switch console to UTF-8 + VT
+    # and reconfigure streams so Unicode box/block glyphs never turn into mojibake.
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            k32 = ctypes.windll.kernel32
+            k32.SetConsoleOutputCP(65001)
+            k32.SetConsoleCP(65001)
+            h_out = k32.GetStdHandle(-11)
+            mode = ctypes.c_uint32()
+            if k32.GetConsoleMode(h_out, ctypes.byref(mode)):
+                k32.SetConsoleMode(h_out, mode.value | 0x0004)
+        except Exception:
+            pass
     for stream in (sys.stdout, sys.stderr):
         try:
             stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
@@ -315,12 +441,12 @@ def main() -> None:
         "--detail", action="store_true", help="Ask for a longer, more detailed answer"
     )
     p_ask.add_argument(
-        "--model", default=None, help="Override the model (default: qwen2.5:1.5b)"
+        "--model", default=None, help="Override the model (default: qwen3:0.6b)"
     )
     p_ask.add_argument(
         "--fast",
         action="store_true",
-        help="Use the small fast model (qwen2.5:0.5b) for quicker answers",
+        help="Use the fast local model (qwen3:0.6b) for quicker answers",
     )
 
     # nuro llm [status|models|pull <model>|start]
@@ -407,7 +533,12 @@ def main() -> None:
         "--baud", default=2000000, type=int, help="Baud rate (default: 2000000)"
     )
 
-    args, unknown = parser.parse_known_args()
+    _sub_choices = set(sub.choices.keys())
+    if len(sys.argv) > 1 and not sys.argv[1].startswith("-") and sys.argv[1] not in _sub_choices:
+        args = argparse.Namespace(command=None)
+        unknown = sys.argv[1:]
+    else:
+        args, unknown = parser.parse_known_args()
 
     # If first arg is not a known subcommand -> smart route based on query contents!
     if not args.command and unknown:
@@ -450,25 +581,23 @@ def main() -> None:
 
             print(launch_obsidian_vault())
             return
-        else:
+        elif _looks_like_math_or_sci(q_raw):
             from host.calc import calculate_and_graph
 
             print(calculate_and_graph(q_raw))
             return
+        else:
+            _inline_ai_reply(q_raw)
+            return
 
     if args.command is None:
         from host.dash.warp_fx import run_warp_start_screen
-
-        first_cmd = run_warp_start_screen(version=_version())
-        if not first_cmd or first_cmd.lower() in ("q", "quit", "exit"):
-            return
-        # Re-dispatch first command cleanly through the exact same CLI or interactive shell!
         import shlex
 
-        try:
-            tokens = shlex.split(first_cmd)
-        except ValueError:
-            tokens = first_cmd.split()
+        # Warm up local qwen3:1.7b silently in the background while the 3D screen spins
+        if sys.stdin.isatty() and sys.stdout.isatty():
+            _start_llm_background_warmup()
+
         known_top = {
             "setup", "tui", "neural", "mneuro", "live", "treat", "patient", "clinic",
             "demo", "web", "gui", "bench", "eval", "test", "figures", "chat", "chatbot",
@@ -476,21 +605,57 @@ def main() -> None:
             "phy", "session", "obsidian", "graph", "term", "serial", "solve", "info",
             "doctor", "watch", "pnp", "plug-and-play", "autolaunch",
         }
-        if tokens and tokens[0].lower() in known_top:
-            sys.argv = [sys.argv[0]] + tokens
-            main()
-            return
-        # Otherwise evaluate the first query directly in the interactive shell (no second banner!)
-        from host.calc import calculate_and_graph, run_calc_repl, _print_calc_help
+        # Interactive views that take over the full screen: return straight to the
+        # NURO start screen when exited (instead of exiting the whole CLI).
+        fullscreen_cmds = {"tui", "neural", "mneuro", "live", "treat", "patient", "clinic", "demo", "gui"}
+        persistent_chat: List[tuple] = []
 
-        if first_cmd.lower() in ("help", "?", "commands"):
-            _print_calc_help()
-        else:
-            print()
-            print(calculate_and_graph(first_cmd))
-            print()
-        run_calc_repl(show_banner=False)
-        return
+        while True:
+            first_cmd = run_warp_start_screen(version=_version(), chat_log=persistent_chat)
+            if not first_cmd or first_cmd.lower() in ("q", "quit", "exit"):
+                return
+            try:
+                tokens = shlex.split(first_cmd)
+            except ValueError:
+                tokens = first_cmd.split()
+            if tokens and tokens[0].lower() in known_top:
+                saved_argv = sys.argv[:]
+                try:
+                    sys.argv = [sys.argv[0]] + tokens
+                    main()
+                except SystemExit:
+                    pass
+                except KeyboardInterrupt:
+                    pass
+                finally:
+                    sys.argv = saved_argv
+                if tokens[0].lower() not in fullscreen_cmds and sys.stdin.isatty():
+                    try:
+                        input("\n  Press Enter to return to NURO...")
+                    except (EOFError, KeyboardInterrupt):
+                        pass
+                continue
+            if first_cmd.lower() in ("help", "?", "commands"):
+                from host.calc import _print_calc_help
+
+                _print_calc_help()
+                if sys.stdin.isatty():
+                    try:
+                        input("\n  Press Enter to return to NURO...")
+                    except (EOFError, KeyboardInterrupt):
+                        pass
+                continue
+            if _looks_like_math_or_sci(first_cmd):
+                from host.calc import calculate_and_graph, run_calc_repl
+
+                print()
+                print(calculate_and_graph(first_cmd))
+                print()
+                run_calc_repl(show_banner=False)
+                continue
+            # Conversational input (e.g., "hey", "explain black holes") -> answer directly with local AI!
+            _inline_ai_reply(first_cmd)
+            continue
 
     cmd = args.command or "calc"
 
@@ -656,7 +821,7 @@ def main() -> None:
 
         if not llm_backend.ensure_server(wait_seconds=20.0):
             print(llm_backend.status_text())
-            print("\nRun `nuro llm pull qwen2.5:1.5b` once, then try again.")
+            print("\nRun `nuro llm pull qwen3:0.6b` once, then try again.")
             raise SystemExit(2)
 
         if getattr(args, "fast", False):
