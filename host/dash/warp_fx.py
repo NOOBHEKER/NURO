@@ -709,13 +709,13 @@ def _build_warp_start_frame(
     avail_above_box = max(8, max_rows - 1 - 3 - len(palette_lines))
     chat_visible_lines: List[str] = []
     if chat_log and not show_palette and avail_above_box >= 13:
-        # Keep the 3D spinning hero alive at the top (9-12 rows) and scroll Q&A upwards below it!
-        canvas_h = max(9, min(12, avail_above_box - 5))
+        # Keep the 3D spinning hero alive at the top (9-15 rows) and scroll Q&A upwards below it!
+        canvas_h = max(9, min(15, avail_above_box - 5))
         chat_budget = avail_above_box - canvas_h - 1  # 1 subtle divider line
         all_chat = _wrap_chat_lines(chat_log, frame_w, ai_busy=ai_busy, t_sec=t_sec)
         chat_visible_lines = all_chat[-chat_budget:] if chat_budget > 0 else []
     else:
-        canvas_h = max(8, min(18, avail_above_box))
+        canvas_h = max(8, min(24, avail_above_box))
 
     hw_color = COL_CHECK_SAGE if hw_live else COL_TEXT_DIM
     left_col: List[str] = [
@@ -734,9 +734,12 @@ def _build_warp_start_frame(
 
     right_rows = render_warp_3d_canvas(width=right_w, height=canvas_h, t_sec=t_sec)
 
+    # Vertically center the left info column beside the 3D hero on tall/fullscreen windows
+    left_top_pad = max(0, (canvas_h - len(left_col)) // 2)
     lines: List[str] = []
     for i in range(canvas_h):
-        l_txt = _pad_left(left_col[i] if i < len(left_col) else "", left_w)
+        li = i - left_top_pad
+        l_txt = _pad_left(left_col[li] if 0 <= li < len(left_col) else "", left_w)
         lines.append(_pad_left(f"  {l_txt}{right_rows[i]}", frame_w))
 
     if chat_visible_lines:
@@ -1087,7 +1090,9 @@ def run_warp_start_screen(
                     prev_rows = []
                 prev_size = (term_cols, term_rows)
 
-            dyn_w = min(96, max(50, term_cols - 2))
+            # Responsive sizing + dead-center layout (like agy CLI / OpenCode) on any window or fullscreen!
+            dyn_w = min(124, max(50, term_cols - 4))
+            margin_x = " " * max(0, (term_cols - dyn_w) // 2)
             with chat_lock:
                 log_snap = list(chat_log)
                 busy_snap = ai_state["busy"]
@@ -1105,7 +1110,12 @@ def run_warp_start_screen(
                 chat_log=log_snap,
                 ai_busy=busy_snap,
             )
-            new_rows = frame.splitlines()[: max(1, term_rows - 1)]
+            raw_rows = frame.splitlines()
+            max_vis_rows = max(1, term_rows - 1)
+            slack_y = max(0, max_vis_rows - len(raw_rows))
+            # Center vertically on start screen; gently anchor with top breathing room in chat mode
+            margin_y = (slack_y // 2) if not log_snap else min(2, slack_y // 2)
+            new_rows = ([""] * margin_y + [margin_x + r for r in raw_rows])[:max_vis_rows]
             last_rows_count = len(new_rows)
             payload = _diff_frame_payload(prev_rows, new_rows)
             if len(payload) > 16:  # skip no-op frames
