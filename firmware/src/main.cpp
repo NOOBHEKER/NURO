@@ -192,9 +192,11 @@ static int8_t         g_in_feat[NL_SNN_IN];
 
 static nl_dsp_out_t   g_last_dsp_out;
 static uint8_t        g_last_spikes = 0;
-static uint8_t        g_cur_led_r = 0, g_cur_led_g = 15, g_cur_led_b = 0;
-static uint32_t       g_last_led_update_ms = 0;
-static uint32_t       g_red_led_until_ms = 0;
+static uint8_t        g_cur_led_zone = 1;       /* 1=Green, 2=Yellow, 3=Red */
+static uint8_t        g_pend_led_zone = 1;
+static uint32_t       g_pend_zone_since_ms = 0;
+static uint32_t       g_last_led_switch_ms = 0;
+static uint32_t       g_last_frame_rx_ms = 0;
 
 /* Deterministic int8 SNN weights (row-major [HID][IN] for L1 cache & SIMD locality) */
 static int8_t g_w1[NL_SNN_HID][NL_SNN_IN];
@@ -227,51 +229,64 @@ void nl_set_armed(bool armed) {
     }
 }
 
-/* Hysteresis & rate-limited LED updater (prevents 1000 Hz strobe flicker)
+/* Apply solid condition color to main WS2812 RGB LED (1=Green, 2=Yellow, 3=Red) */
+static void nl_apply_led_zone(uint8_t zone) {
+    if (zone == 3) {
+        nl_set_status_led(40, 0, 0);   /* 🔴 Solid RED: seizure burst / high synchrony */
+    } else if (zone == 2) {
+        nl_set_status_led(36, 22, 0);  /* 🟡 Solid YELLOW: pre-ictal / elevated synchrony */
+    } else {
+        nl_set_status_led(0, 28, 0);   /* 🟢 Solid GREEN: calm resting / suppressed */
+    }
+    g_cur_led_zone = zone;
+    g_pend_led_zone = zone;
+    g_last_led_switch_ms = millis();
+}
+
+/* Rock-solid debounced & minimum-dwell RGB LED controller (zero rapid blinking!)
  * color_hint:
  *   0 = Auto (derive from on-chip SNN & DSP)
- *   1 = Green (calm resting / suppressed: matches TUI cur_r < 0.35)
- *   2 = Yellow (coherence ramp / early warning: matches TUI 0.35 <= cur_r < 0.65)
- *   3 = Red (burst / high synchrony: matches TUI cur_r >= 0.65)
+ *   1 = Green (calm resting / suppressed: R < 0.35)
+ *   2 = Yellow (pre-ictal / transition: 0.35 <= R < 0.55)
+ *   3 = Red (seizure burst / hypersynchrony: R >= 0.55)
  */
 static void update_live_status_led(bool is_burst, bool triggered, uint16_t env, uint8_t spikes, uint8_t color_hint = 0) {
+    (void)triggered;
     uint32_t now = millis();
-    uint8_t target_r = 0, target_g = 15, target_b = 0; // Default: calm resting Green
+    uint8_t target_zone = 1;
 
-    if (triggered) {
-        // Red latch on burst trigger: hold for 150 ms so each pulse is a clean, solid indicator
-        g_red_led_until_ms = now + 150;
-        target_r = 30; target_g = 0; target_b = 0; // 🔴 Solid RED on stimulation pulse
-    } else if (now < g_red_led_until_ms) {
-        target_r = 30; target_g = 0; target_b = 0; // 🔴 Solid RED during 150ms pulse marker
-    } else if (color_hint == 1) {
-        // Explicit host green: R(t) < 0.35 in terminal -> ALWAYS GREEN
-        target_r = 0; target_g = 15; target_b = 0;  // 🟢 GREEN
-    } else if (color_hint == 2) {
-        // Explicit host yellow: 0.35 <= R(t) < 0.65 in terminal -> ALWAYS YELLOW
-        target_r = 25; target_g = 20; target_b = 0; // 🟡 YELLOW
-    } else if (color_hint == 3) {
-        // Explicit host red: R(t) >= 0.65 in terminal -> 🔴 RED
-        target_r = 30; target_g = 0; target_b = 0;  // 🔴 RED
+    if (color_hint >= 1 && color_hint <= 3) {
+        /* Strictly follow host ZoneTracker condition (Green / Yellow / Red) */
+        target_zone = color_hint;
     } else {
-        // Standalone / Idle fallback when no host color hint is present (color_hint == 0)
-        if (is_burst) {
-            target_r = 30; target_g = 0; target_b = 0;  // 🔴 RED
-        } else if (env >= 450 || spikes >= 3) {
-            target_r = 25; target_g = 20; target_b = 0;  // 🟡 YELLOW
+        /* Standalone / benchmark mode (no host color hint) */
+        if (is_burst || spikes >= 4) {
+            target_zone = 3; /* 🔴 RED */
+        } else if (env >= 400 || spikes >= 2) {
+            target_zone = 2; /* 🟡 YELLOW */
         } else {
-            target_r = 0; target_g = 15; target_b = 0;   // 🟢 GREEN: Calm Resting State
+            target_zone = 1; /* 🟢 GREEN */
         }
     }
 
-    // Rate-limit physical WS2812 writes to >= 30 ms and only on actual color change
-    if ((target_r != g_cur_led_r || target_g != g_cur_led_g || target_b != g_cur_led_b) &&
-        (now - g_last_led_update_ms >= 30)) {
-        g_cur_led_r = target_r;
-        g_cur_led_g = target_g;
-        g_cur_led_b = target_b;
-        g_last_led_update_ms = now;
-        nl_set_status_led(g_cur_led_r, g_cur_led_g, g_cur_led_b);
+    if (target_zone == g_cur_led_zone) {
+        g_pend_led_zone = target_zone;
+        g_pend_zone_since_ms = now;
+        return;
+    }
+
+    if (target_zone != g_pend_led_zone) {
+        g_pend_led_zone = target_zone;
+        g_pend_zone_since_ms = now;
+        return;
+    }
+
+    /* Require sustained target stability + minimum physical hold time so LED never flickers */
+    uint32_t req_debounce_ms = (target_zone == 3) ? 80U : 150U;
+    uint32_t req_hold_ms     = (g_cur_led_zone == 3) ? 500U : 400U;
+    if ((now - g_pend_zone_since_ms >= req_debounce_ms) &&
+        (now - g_last_led_switch_ms >= req_hold_ms)) {
+        nl_apply_led_zone(target_zone);
     }
 }
 
@@ -437,7 +452,7 @@ static void init_watchdog(void) {
 
 void setup() {
     /* 1. Initialize status LED to calm resting baseline Green */
-    nl_set_status_led(0, 15, 0);
+    nl_apply_led_zone(1);
 
     /* 2. Configure safe stimulation marker pin, driven low before anything else */
     pinMode(PIN_STIM_OUT, OUTPUT);
@@ -482,13 +497,16 @@ void loop() {
     /* 0. Feed the watchdog once per scheduler pass */
     esp_task_wdt_reset();
 
-    /* 0. Idle / Static LED refresh:
-     * When no frames are arriving, restore physical LED to calm resting Green
-     * once the Red (250ms) stimulation latch expires.
+    /* 0. True idle LED recovery:
+     * ONLY restore calm resting Green if no binary frames have arrived for >= 1.5 s.
+     * Never fires during active streaming (fixes 50 ms rapid blinking bug!).
      */
     uint32_t now_idle = millis();
-    if (now_idle >= g_red_led_until_ms && (now_idle - g_last_led_update_ms >= 50)) {
-        update_live_status_led(false, false, 0, 0, 0);
+    if (g_last_frame_rx_ms != 0U && (now_idle - g_last_frame_rx_ms >= 1500U)) {
+        if (g_cur_led_zone != 1) {
+            nl_apply_led_zone(1);
+        }
+        g_last_frame_rx_ms = 0U;
     }
 
     /* 1. Demultiplex incoming bytes:
@@ -536,6 +554,7 @@ void loop() {
             memmove(g_rx_buf, g_rx_buf + 1, --g_rx_len);
             return;
         }
+        g_last_frame_rx_ms = millis();
 
         /* Execute 2-sample block through 61-tap Q15 Quadrature FIR + Artifact Blanking */
         nl_dsp_out_t dsp_out0 = nl_dsp_step(&g_dsp, in_frame->samples[0]);

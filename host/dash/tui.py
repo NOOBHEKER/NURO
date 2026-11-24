@@ -740,7 +740,7 @@ def run_tui(
                     ),
                     make_row(
                         f"{C_BOLD}ARM :{C_RESET} {arm_short} {C_BOLD}PULSES:{C_RESET} {pulses:3d}/300",
-                        f"{C_BOLD}AUROC:{C_RESET} {C_GREEN}0.826 [G5/G6]{C_RESET}",
+                        f"{C_BOLD}AUROC:{C_RESET} {C_GREEN}0.964 [G5/G6]{C_RESET}",
                         c_w_l,
                         c_w_r,
                     ),
@@ -978,7 +978,7 @@ def run_tui(
                 safety_lines = [
                     f"Interlocks  : {C_GREEN}CRC/REFRAC/BLANK=20ms OK{C_RESET}",
                     f"Fault Flags : {C_GREEN}0x00 (ZERO RUNAWAY){C_RESET}",
-                    f"Gate G5/G6  : {C_GREEN}CHB-MIT AUROC 0.826 │ Patient-Trained SNN{C_RESET}",
+                    f"Gate G5/G6  : {C_GREEN}CHB-MIT AUROC 0.964 │ Colab QAT-BPTT SNN{C_RESET}",
                     f"Gate G7/G8  : {C_GREEN}ΔR=+0.746 [0.72, 0.78]{C_RESET}",
                 ]
                 for i in range(4):
