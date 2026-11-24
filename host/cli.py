@@ -1,7 +1,10 @@
 """nuro — Unified CLI for Neural Loop ($0 ESP32-S3 HIL Closed-Loop Testbed).
 
 Usage:
-  nuro                  # Launch the interactive scientific calculator shell
+  nuro                  # Show all options, then open the interactive shell
+  nuro chat [n]         # PC-only offline AI chatbot quiz (n questions, default 3)
+  nuro ask "question"   # Ask the local AI anything (all subjects, PC only)
+  nuro llm status       # Show the local model / runtime
   nuro setup            # One-command environment bootstrap (fresh computer)
   nuro tui              # Launch interactive Native Terminal TUI
   nuro web              # Launch 60 FPS Localhost TUI Workstation & open browser
@@ -21,6 +24,7 @@ ESP32-S3/USB bridge > COM6 on Windows (no default elsewhere).
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import webbrowser
 from typing import List
@@ -43,6 +47,13 @@ def _announce_port(port: str) -> None:
     if is_native_usb(port):
         note = "  (native USB — the HIL protocol needs the UART port)"
     print(f"[nuro] serial port: {port}{note}")
+
+
+def print_main_menu() -> None:
+    """Print the Warp-CLI-style starting screen shown when the user types `nuro`."""
+    from host.dash.warp_fx import print_warp_cli_menu
+
+    print_warp_cli_menu(version=_version(), animate=True)
 
 
 def handle_session_command(args: List[str]) -> str:
@@ -100,10 +111,18 @@ def main() -> None:
         except Exception:
             pass
 
+    # Apply bundled JetBrains Mono font to the active terminal window (no-op if piped/unsupported)
+    try:
+        from host.dash.console_font import apply_bundled_console_font
+
+        apply_bundled_console_font()
+    except Exception:
+        pass
+
     parser = argparse.ArgumentParser(
         prog="nuro",
         description="⚡ nuro — Unified CLI for Neural Loop ($0 ESP32-S3 Closed-Loop Testbed)",
-        epilog="Examples:\n  nuro setup    (bootstrap this computer once)\n  nuro demo     (web cockpit + TUI + GUI)\n  nuro info     (read-only board probe)\n  nuro bench    (1000-frame live benchmark on the auto-detected port)",
+        epilog="Examples:\n  nuro          (show options + open the shell; type test for the AI chatbot)\n  nuro chat 5   (PC-only AI chatbot with 5 questions)\n  nuro ask \"explain photosynthesis in detail\"  (local AI, any subject)\n  nuro llm status   (show the local model)\n  nuro setup    (bootstrap this computer once)\n  nuro demo     (web cockpit + TUI + GUI)\n  nuro info     (read-only board probe)\n  nuro bench    (1000-frame live benchmark on the auto-detected port)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--version", action="version", version=f"nuro {_version()}")
@@ -271,6 +290,56 @@ def main() -> None:
         help="Optional math expression, equation, or calculus question",
     )
 
+    # nuro chat (PC-only offline AI chatbot — never runs on the ESP32)
+    p_chat = sub.add_parser(
+        "chat",
+        aliases=["chatbot", "ai"],
+        help="Start the offline AI chatbot quiz (PC only, never on ESP32)",
+    )
+    p_chat.add_argument(
+        "questions",
+        nargs="?",
+        type=int,
+        default=3,
+        help="Number of test questions to ask (default: 3)",
+    )
+
+    # nuro ask "question" (one-shot local LLM answer, PC only)
+    p_ask = sub.add_parser(
+        "ask",
+        aliases=["query"],
+        help="Ask the local AI anything, any subject (PC only)",
+    )
+    p_ask.add_argument("question", nargs="+", help="Your question")
+    p_ask.add_argument(
+        "--detail", action="store_true", help="Ask for a longer, more detailed answer"
+    )
+    p_ask.add_argument(
+        "--model", default=None, help="Override the model (default: qwen2.5:1.5b)"
+    )
+    p_ask.add_argument(
+        "--fast",
+        action="store_true",
+        help="Use the small fast model (qwen2.5:0.5b) for quicker answers",
+    )
+
+    # nuro llm [status|models|pull <model>|start]
+    p_llm = sub.add_parser(
+        "llm", help="Manage the local AI model (status, models, pull, start)"
+    )
+    p_llm.add_argument("action", nargs="?", default="status")
+    p_llm.add_argument("model", nargs="?", default=None)
+
+    # nuro symptoms "fever, cough" (educational symptom checker, PC only)
+    p_sym = sub.add_parser(
+        "symptoms",
+        aliases=["symptom", "health"],
+        help="Describe symptoms for an educational estimate (not a diagnosis)",
+    )
+    p_sym.add_argument(
+        "text", nargs="*", help="Your symptoms, e.g. \"fever, cough, body ache\""
+    )
+
     # nuro chem (Advanced Chemistry Balancer & Numericals)
     p_chem = sub.add_parser(
         "chem", help="Chemistry Reaction Balancer, Molar Mass, pH & Kinetics"
@@ -386,6 +455,42 @@ def main() -> None:
 
             print(calculate_and_graph(q_raw))
             return
+
+    if args.command is None:
+        from host.dash.warp_fx import run_warp_start_screen
+
+        first_cmd = run_warp_start_screen(version=_version())
+        if not first_cmd or first_cmd.lower() in ("q", "quit", "exit"):
+            return
+        # Re-dispatch first command cleanly through the exact same CLI or interactive shell!
+        import shlex
+
+        try:
+            tokens = shlex.split(first_cmd)
+        except ValueError:
+            tokens = first_cmd.split()
+        known_top = {
+            "setup", "tui", "neural", "mneuro", "live", "treat", "patient", "clinic",
+            "demo", "web", "gui", "bench", "eval", "test", "figures", "chat", "chatbot",
+            "quiz", "ask", "ai", "symptoms", "health", "check", "llm", "calc", "chem",
+            "phy", "session", "obsidian", "graph", "term", "serial", "solve", "info",
+            "doctor", "watch", "pnp", "plug-and-play", "autolaunch",
+        }
+        if tokens and tokens[0].lower() in known_top:
+            sys.argv = [sys.argv[0]] + tokens
+            main()
+            return
+        # Otherwise evaluate the first query directly in the interactive shell (no second banner!)
+        from host.calc import calculate_and_graph, run_calc_repl, _print_calc_help
+
+        if first_cmd.lower() in ("help", "?", "commands"):
+            _print_calc_help()
+        else:
+            print()
+            print(calculate_and_graph(first_cmd))
+            print()
+        run_calc_repl(show_banner=False)
+        return
 
     cmd = args.command or "calc"
 
@@ -514,6 +619,89 @@ def main() -> None:
         for f in files:
             print(f"  - {f}")
 
+    elif cmd in ("chat", "chatbot", "ai"):
+        from host.chatbot import run_chatbot_session
+
+        run_chatbot_session(getattr(args, "questions", 3) or 3)
+
+    elif cmd in ("symptoms", "symptom", "health"):
+        from host import health
+
+        described = " ".join(getattr(args, "text", [])).strip()
+        if not described:
+            print('Usage: nuro symptoms "fever, cough, body ache"')
+            print(f"Conditions covered: {health.condition_options()}")
+            raise SystemExit(2)
+        answer_text = health.answer(described)
+        if answer_text is None:
+            print("I could not spot any symptoms I recognise in that sentence.")
+            print('Try: nuro symptoms "fever, cough, loss of smell"')
+            print(f"Conditions covered: {health.condition_options()}")
+            raise SystemExit(2)
+        print(answer_text)
+
+    elif cmd in ("ask", "query"):
+        import sys as _sys
+
+        from host import llm_backend
+
+        question = " ".join(getattr(args, "question", [])).strip()
+        if not question:
+            print("Usage: nuro ask \"your question\"")
+            raise SystemExit(2)
+
+        if getattr(args, "model", None):
+            os.environ["NURO_LLM_MODEL"] = args.model
+            llm_backend.set_model(args.model)
+
+        if not llm_backend.ensure_server(wait_seconds=20.0):
+            print(llm_backend.status_text())
+            print("\nRun `nuro llm pull qwen2.5:1.5b` once, then try again.")
+            raise SystemExit(2)
+
+        if getattr(args, "fast", False):
+            fast = llm_backend.fast_backend()
+            if fast is None:
+                print(
+                    f"Fast model not installed. Run: nuro llm pull {llm_backend.FAST_MODEL}"
+                )
+                raise SystemExit(2)
+            llm_backend.set_model(fast.model)
+
+        backend = llm_backend.detect()
+        print(f"[{backend.model}] ", end="", flush=True)
+        got = False
+        for piece in llm_backend.ask_stream(
+            question,
+            max_tokens=600 if getattr(args, "detail", False) else 220,
+        ):
+            _sys.stdout.write(piece)
+            _sys.stdout.flush()
+            got = True
+        print()
+        if not got:
+            print("The local model did not return an answer.", file=_sys.stderr)
+            raise SystemExit(1)
+
+    elif cmd == "llm":
+        from host import llm_backend
+
+        action = (getattr(args, "action", None) or "status").lower()
+        if action == "status":
+            print(llm_backend.status_text())
+        elif action in ("models", "list"):
+            models = llm_backend.ollama_models()
+            print("\n".join(models) if models else "No models installed.")
+        elif action == "start":
+            print("Started." if llm_backend.ensure_server() else llm_backend.status_text())
+        elif action == "pull":
+            model = getattr(args, "model", None) or llm_backend.DEFAULT_MODEL
+            print(f"Pulling {model} ...")
+            raise SystemExit(llm_backend.pull_model(model))
+        else:
+            print("Usage: nuro llm [status|models|start|pull <model>]")
+            raise SystemExit(2)
+
     elif cmd == "calc":
         from host.calc import calculate_and_graph, run_calc_repl
 
@@ -521,7 +709,7 @@ def main() -> None:
         if q_list:
             print(calculate_and_graph(" ".join(q_list)))
         else:
-            run_calc_repl()
+            run_calc_repl(show_banner=(args.command is not None))
 
     elif cmd == "chem":
         from host.chem import solve_chem_numerical, run_chem_repl
